@@ -94,7 +94,7 @@ def yue2_job_status(job_id: str) -> dict:
 def yue2_generate_song(
     style: str,
     lyrics: str,
-    title: str = "Untitled Track",
+    title: str = "",
     cot: str = "full",
     ode_steps: int = 8,
     ode_method: str = "midpoint",

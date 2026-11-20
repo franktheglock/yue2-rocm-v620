@@ -145,19 +145,10 @@ def _save_songs(songs: list[dict]):
         META_FILE.write_text(json.dumps(songs, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
-    """Ask the configured LLM provider (openai-compat / anthropic / ollama) for an album cover prompt."""
-    snippet = (lyrics or "").strip()[:500]
-    fallback = f"Artistic vinyl album cover art inspired by {style}, mood of '{title}', atmospheric lighting, rich texture, no text, no letters, no watermark"
+def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[str]:
+    """Call the configured LLM provider (openai-compat / anthropic / ollama)."""
     if not LLM_URL:
-        return fallback
-    sys_msg = (
-        "You are an album cover art director. Given a song's title, musical style, and lyrics, "
-        "write a single concise visual image-generation prompt (2-3 sentences max) for a striking "
-        "square album cover. Focus on composition, color palette, lighting, and artistic medium. "
-        "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
-    )
-    user_msg = f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}"
+        return None
     try:
         with httpx.Client(timeout=30.0) as c:
             if LLM_PROVIDER == "anthropic":
@@ -168,7 +159,7 @@ def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
                     headers=headers,
                     json={
                         "model": LLM_MODEL,
-                        "max_tokens": 140,
+                        "max_tokens": max_tokens,
                         "system": sys_msg,
                         "messages": [{"role": "user", "content": user_msg}],
                     },
@@ -191,7 +182,6 @@ def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
                 r.raise_for_status()
                 txt = (r.json().get("message") or {}).get("content", "").strip()
             else:
-                # OpenAI-compatible (llama.cpp, vLLM, Ollama /v1, OpenAI, OpenRouter, LM Studio, Groq)
                 headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
                 endpoint = LLM_URL if LLM_URL.endswith("/chat/completions") else (
                     f"{LLM_URL}/chat/completions" if LLM_URL.endswith("/v1") else f"{LLM_URL}/v1/chat/completions"
@@ -206,17 +196,53 @@ def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
                             {"role": "user", "content": user_msg},
                         ],
                         "temperature": 0.8,
-                        "max_tokens": 140,
+                        "max_tokens": max_tokens,
                     },
                 )
                 r.raise_for_status()
                 txt = r.json()["choices"][0]["message"]["content"].strip()
             if "</think>" in txt:
                 txt = txt.split("</think>", 1)[1].strip()
-            return txt or fallback
+            return txt or None
     except Exception as exc:
-        print(f"[cover-llm:{LLM_PROVIDER}] fallback ({exc})", flush=True)
-        return fallback
+        print(f"[llm:{LLM_PROVIDER}] failed ({exc})", flush=True)
+        return None
+
+
+def _craft_song_title(style: str, lyrics: str) -> str:
+    """Ask the configured LLM for a short, evocative song title from style & lyrics."""
+    snippet = (lyrics or "").strip()[:500]
+    txt = _call_llm(
+        sys_msg=(
+            "You are a music producer naming a song. Given the musical style and lyrics, "
+            "output a single short, memorable song title (2 to 5 words). "
+            "No quotes, no punctuation at the end, no explanation — output ONLY the title."
+        ),
+        user_msg=f"Style: {style}\nLyrics:\n{snippet}",
+        max_tokens=32,
+    )
+    if txt:
+        cleaned = txt.splitlines()[0].strip().strip("\"'`*_.,:;!?").strip()
+        if cleaned:
+            return cleaned[:80]
+    return "Untitled Track"
+
+
+def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
+    """Ask the configured LLM provider (openai-compat / anthropic / ollama) for an album cover prompt."""
+    snippet = (lyrics or "").strip()[:500]
+    fallback = f"Artistic vinyl album cover art inspired by {style}, mood of '{title}', atmospheric lighting, rich texture, no text, no letters, no watermark"
+    txt = _call_llm(
+        sys_msg=(
+            "You are an album cover art director. Given a song's title, musical style, and lyrics, "
+            "write a single concise visual image-generation prompt (2-3 sentences max) for a striking "
+            "square album cover. Focus on composition, color palette, lighting, and artistic medium. "
+            "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
+        ),
+        user_msg=f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}",
+        max_tokens=140,
+    )
+    return txt or fallback
 
 
 def _extract_b64_image(data: dict) -> Optional[str]:
@@ -335,7 +361,7 @@ async def startup_load():
 
 
 class GenerateRequest(BaseModel):
-    title: str = Field(default="Untitled Track")
+    title: str = Field(default="")
     style: str = Field(..., min_length=1)
     lyrics: str = Field(..., min_length=1)
     cot: str = Field(default="full")
@@ -582,7 +608,9 @@ def generate(req: GenerateRequest):
         raise HTTPException(503, "Engine is still loading")
     job_id = uuid.uuid4().hex[:10]
     seed = req.seed if req.seed is not None else random.randint(1, 2_000_000)
-    title = req.title.strip() or "Untitled Track"
+    raw_title = (req.title or "").strip()
+    needs_title = not raw_title or raw_title.lower() in {"untitled", "untitled track"}
+    title = raw_title if not needs_title else "Untitled Track"
     job = {
         "job_id": job_id,
         "title": title,
@@ -599,14 +627,27 @@ def generate(req: GenerateRequest):
     _jobs[job_id] = job
     _broadcast("job_update", {"job": dict(job)})
 
-    # Kick off cover art generation IN PARALLEL on 192.168.1.142 (0s added to V620 audio time!)
-    cover_shared: dict = {"cover_url": None, "cover_prompt": req.cover_prompt}
-    if req.generate_cover:
-        threading.Thread(
-            target=_run_cover_pipeline,
-            args=(job_id, title, req.style.strip(), req.lyrics.strip(), req.cover_prompt, cover_shared),
-            daemon=True,
-        ).start()
+    # Kick off auto-titling + cover art IN PARALLEL on the configured LLM/Image host (0s added to V620!)
+    cover_shared: dict = {"title": title, "cover_url": None, "cover_prompt": req.cover_prompt}
+
+    def _sidecar_title_and_cover():
+        chosen_title = title
+        if needs_title:
+            chosen_title = _craft_song_title(req.style.strip(), req.lyrics.strip())
+            cover_shared["title"] = chosen_title
+            job["title"] = chosen_title
+            _broadcast("job_update", {"job": dict(job)})
+            for s in _songs:
+                if s["id"] == job_id:
+                    s["title"] = chosen_title
+                    _save_songs(_songs)
+                    _broadcast("song_updated", {"song": s})
+                    break
+        if req.generate_cover:
+            _run_cover_pipeline(job_id, chosen_title, req.style.strip(), req.lyrics.strip(), req.cover_prompt, cover_shared)
+
+    if needs_title or req.generate_cover:
+        threading.Thread(target=_sidecar_title_and_cover, daemon=True).start()
 
     def _worker():
         try:
@@ -641,7 +682,7 @@ def generate(req: GenerateRequest):
                 t = res["timing"]
                 song = {
                     "id": job_id,
-                    "title": title,
+                    "title": cover_shared.get("title") or title,
                     "style": req.style.strip(),
                     "lyrics": req.lyrics.strip(),
                     "cot": req.cot,
