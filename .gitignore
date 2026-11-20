@@ -24,6 +24,9 @@ report/
 *.wav
 *.mp3
 *.png
+!samples/
+!samples/*.mp3
+!samples/*.jpg
 
 # Scratch / probe scripts
 bench_*.py
