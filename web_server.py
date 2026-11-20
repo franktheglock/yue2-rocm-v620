@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html as html_lib
 import json
 import os
 import random
+import re
 import shutil
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -276,6 +279,142 @@ class GenerateRequest(BaseModel):
 
 class CoverRequest(BaseModel):
     cover_prompt: Optional[str] = None
+
+
+class ImportLinkRequest(BaseModel):
+    url: str = Field(..., min_length=4)
+
+
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _extract_meta(page_html: str, key: str) -> Optional[str]:
+    m = re.search(rf'<meta[^>]+(?:property|name)="{re.escape(key)}"[^>]+content="([^"]*)"', page_html, re.I)
+    if not m:
+        m = re.search(rf'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="{re.escape(key)}"', page_html, re.I)
+    return html_lib.unescape(m.group(1)) if m else None
+
+
+def _import_suno(url: str) -> dict:
+    clean = url.strip().strip("\"'<>()[]")
+    if not clean.startswith("http"):
+        clean = "https://" + clean
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+
+    uuid_val = None
+    m_song = re.match(r"^/song/([0-9a-fA-F-]{36})", path)
+    m_short = re.match(r"^/s/([A-Za-z0-9_-]+)", path)
+    m_hook = re.match(r"^/hook/([^/]+)", path)
+
+    with httpx.Client(headers={"User-Agent": _UA}, timeout=20.0, follow_redirects=True) as c:
+        if m_song:
+            uuid_val = m_song.group(1).lower()
+        elif m_short:
+            r = c.get(f"https://suno.com/s/{m_short.group(1)}", headers={"Accept": "text/html,*/*"})
+            m = _UUID_RE.search(str(r.url)) or _UUID_RE.search(r.text)
+            if m:
+                uuid_val = m.group(0).lower()
+        elif m_hook:
+            if _UUID_RE.fullmatch(m_hook.group(1)):
+                uuid_val = m_hook.group(1).lower()
+            else:
+                r = c.get(clean, headers={"Accept": "text/html,*/*"})
+                m = _UUID_RE.search(str(r.url) + " " + r.text)
+                if m:
+                    uuid_val = m.group(0).lower()
+        else:
+            m = _UUID_RE.search(clean)
+            if m:
+                uuid_val = m.group(0).lower()
+
+        if not uuid_val:
+            raise ValueError("Could not resolve a Suno song UUID from that link.")
+
+        res = c.get(f"https://studio-api.prod.suno.com/api/clip/{uuid_val}", headers={"Accept": "application/json"})
+        if res.status_code == 404:
+            raise ValueError("Suno song not found (private or deleted).")
+        res.raise_for_status()
+        clip = res.json()
+
+    meta = clip.get("metadata") or {}
+    return {
+        "source": "suno",
+        "id": uuid_val,
+        "url": f"https://suno.com/song/{uuid_val}",
+        "title": (clip.get("title") or "Untitled").strip(),
+        "artist": clip.get("display_name") or clip.get("handle") or "suno",
+        "style": (meta.get("tags") or clip.get("display_tags") or "").strip(),
+        "lyrics": (meta.get("prompt") or "").strip(),
+        "duration": meta.get("duration"),
+        "image_url": clip.get("image_large_url") or clip.get("image_url"),
+    }
+
+
+def _import_ace(url: str) -> dict:
+    m = re.search(r"acemusic\.ai/song/([A-Za-z0-9_-]+)", url, re.I)
+    if not m:
+        raise ValueError("Not a valid acemusic.ai/song/ link.")
+    song_id = m.group(1)
+    canonical = f"https://acemusic.ai/song/{song_id}"
+    with httpx.Client(headers={"User-Agent": _UA, "Accept": "text/html"}, timeout=20.0, follow_redirects=True) as c:
+        res = c.get(canonical)
+        if res.status_code == 404:
+            raise ValueError("ACE Music song not found (private or deleted).")
+        res.raise_for_status()
+        page_html = res.text
+
+    raw_title = _extract_meta(page_html, "og:title") or "Untitled"
+    raw_desc = _extract_meta(page_html, "og:description") or ""
+    image_url = _extract_meta(page_html, "og:image")
+
+    title = re.sub(r"\s*\|\s*ACE Music\s*$", "", raw_title, flags=re.I).strip() or "Untitled"
+    artist = "acemusic"
+    by_m = re.match(r"^(.*)\s+by\s+(.+)$", title, re.I)
+    if by_m:
+        title, artist = by_m.group(1).strip(), by_m.group(2).strip()
+    style = re.sub(r"^A song made with ACE Music\s*[—–-]\s*", "", raw_desc, flags=re.I).strip()
+
+    lyrics = ""
+    sec = re.search(r'<section class="sp-lyrics"[^>]*>([\s\S]*?)</section>', page_html, re.I)
+    if sec:
+        t = sec.group(1)
+        t = re.sub(r"<h3[^>]*>", "\n\n[", t, flags=re.I)
+        t = re.sub(r"</h3>", "]\n", t, flags=re.I)
+        t = re.sub(r"<br\s*/?>", "\n", t, flags=re.I)
+        t = re.sub(r"</(?:p|div)>", "\n", t, flags=re.I)
+        t = re.sub(r"<[^>]+>", "", t)
+        t = html_lib.unescape(t)
+        t = re.sub(r"[ \t]+\n", "\n", t)
+        lyrics = re.sub(r"\n{3,}", "\n\n", t).strip()
+
+    return {
+        "source": "ace",
+        "id": song_id,
+        "url": canonical,
+        "title": title,
+        "artist": artist,
+        "style": style,
+        "lyrics": lyrics,
+        "duration": None,
+        "image_url": image_url,
+    }
+
+
+@app.post("/api/import-link")
+def import_link(req: ImportLinkRequest):
+    u = req.url.strip()
+    try:
+        if "acemusic.ai" in u.lower():
+            return _import_ace(u)
+        if "suno.com" in u.lower():
+            return _import_suno(u)
+        raise ValueError("Unsupported URL. Paste a suno.com or acemusic.ai song link.")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"Import failed: {exc}")
 
 
 @app.get("/", response_class=HTMLResponse)

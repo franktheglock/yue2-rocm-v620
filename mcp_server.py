@@ -157,6 +157,15 @@ def yue2_generate_song(
 
 
 @mcp.tool()
+def yue2_import_link(url: str) -> dict:
+    """Pull title, style prompt, and lyrics from a public Suno (suno.com) or ACE Music (acemusic.ai) song link."""
+    with _client() as c:
+        r = c.post("/api/import-link", json={"url": url})
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
 def yue2_delete_song(song_id: str) -> dict:
     """Delete a song from the YuE2 Studio library."""
     with _client() as c:

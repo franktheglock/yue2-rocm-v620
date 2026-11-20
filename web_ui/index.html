@@ -736,6 +736,17 @@
     <div class="composer-body">
       <div class="field">
         <div class="field-row">
+          <label class="field-label" for="importUrl">Clone from Suno or ACE link</label>
+          <span id="importMsg" style="font-size:0.71rem;color:var(--ink-muted)"></span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <input id="importUrl" type="text" placeholder="Paste suno.com/song/... or acemusic.ai/song/..." onkeydown="if(event.key==='Enter'){event.preventDefault();importFromLink();}" />
+          <button type="button" class="pill" id="importBtn" onclick="importFromLink()" style="border-radius:var(--radius-md);padding:0 13px;white-space:nowrap;color:var(--ink-primary);border-color:var(--hairline-strong)">Import</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-row">
           <label class="field-label" for="title">Title</label>
         </div>
         <input id="title" type="text" value="Midnight Neon" placeholder="Name your track" />
@@ -1076,6 +1087,37 @@ function addSection(tag) {
   el.value = (el.value.trimEnd() + '\n\n' + tag + '\n').trimStart();
   el.focus();
 }
+async function importFromLink() {
+  const input = document.getElementById('importUrl');
+  const msg = document.getElementById('importMsg');
+  const btn = document.getElementById('importBtn');
+  const url = (input.value || '').trim();
+  if (!url) return;
+  btn.disabled = true;
+  msg.style.color = 'var(--ink-secondary)';
+  msg.textContent = 'Pulling...';
+  try {
+    const res = await fetch('/api/import-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Import failed');
+    if (data.title) document.getElementById('title').value = data.title;
+    if (data.style) document.getElementById('style').value = data.style;
+    if (data.lyrics) document.getElementById('lyrics').value = data.lyrics;
+    msg.style.color = '#34d399';
+    msg.textContent = `Loaded from ${data.source.toUpperCase()}`;
+    input.value = '';
+  } catch (e) {
+    msg.style.color = 'var(--danger)';
+    msg.textContent = e.message || 'Could not import link';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function fillSample() {
   document.getElementById('title').value = 'Electric in the Rain';
   document.getElementById('lyrics').value = `[Verse 1]
