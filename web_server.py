@@ -145,7 +145,7 @@ def _save_songs(songs: list[dict]):
         META_FILE.write_text(json.dumps(songs, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[str]:
+def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 4096) -> Optional[str]:
     """Call the configured LLM provider (openai-compat / openrouter / anthropic / ollama)."""
     effective_url = LLM_URL
     if not effective_url and LLM_PROVIDER == "openrouter" and LLM_API_KEY:
@@ -155,7 +155,7 @@ def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[st
     if not effective_url:
         return None
     try:
-        with httpx.Client(timeout=30.0) as c:
+        with httpx.Client(timeout=60.0) as c:
             if LLM_PROVIDER == "anthropic":
                 headers = {"x-api-key": LLM_API_KEY, "anthropic-version": "2023-06-01"}
                 endpoint = effective_url if effective_url.endswith("/messages") else f"{effective_url}/v1/messages"
@@ -225,7 +225,7 @@ def _craft_song_title(style: str, lyrics: str) -> str:
             "No quotes, no punctuation at the end, no explanation — output ONLY the title."
         ),
         user_msg=f"Style: {style}\nLyrics:\n{snippet}",
-        max_tokens=256,
+        max_tokens=4096,
     )
     if txt:
         cleaned = txt.splitlines()[0].strip().strip("\"'`*_.,:;!?").strip()
@@ -246,7 +246,7 @@ def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
             "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
         ),
         user_msg=f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}",
-        max_tokens=512,
+        max_tokens=4096,
     )
     return txt or fallback
 
