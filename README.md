@@ -139,3 +139,4 @@ If another service on the same machine loads LLMs onto the same GPU, YuE2 Studio
 
 - Configure it in **Settings → Shared GPU · Model Router**, or via `YUE2_UNLOAD_URL` / `YUE2_UNLOAD_ENABLED=0`.
 - Manual trigger: `POST /api/settings/unload-now`.
+- **Reverse direction:** while the studio is idle and the router has a model loading/loaded, YuE2 releases its own ~9.9 GB of VRAM (checked every second). It reloads in ~3 s when the next song is requested. Toggle with **Settings** or `YUE2_YIELD_ENABLED=0`.

@@ -56,6 +56,8 @@ _DEFAULT_SETTINGS = {
     # Model-router coordination (llama.cpp router / Hermes Console): free shared GPU VRAM before each generation
     "unload_enabled": os.environ.get("YUE2_UNLOAD_ENABLED", "1") not in ("0", "false", "False", ""),
     "unload_url": os.environ.get("YUE2_UNLOAD_URL", "http://127.0.0.1:8084").rstrip("/"),
+    # Reverse direction: release YuE2's own VRAM while the router has a model loading/loaded
+    "yield_enabled": os.environ.get("YUE2_YIELD_ENABLED", "1") not in ("0", "false", "False", ""),
 }
 
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -544,6 +546,78 @@ def _run_cover_pipeline(song_id: str, title: str, style: str, lyrics: str, custo
             _broadcast("song_updated", {"song": updated_song})
 
 
+def _router_busy() -> bool:
+    """True if the model router (:8084) has any model loading or loaded."""
+    cfg = _get_settings()
+    base = (cfg.get("unload_url") or "").rstrip("/")
+    if not base:
+        return False
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            r = c.get(f"{base}/v1/models")
+            if r.status_code == 200:
+                for m in r.json().get("data", []):
+                    if (m.get("status") or {}).get("value", "") in ("loaded", "loading"):
+                        return True
+                return False
+            r = c.get(f"{base}/api/status")
+            if r.status_code == 200:
+                return bool(r.json().get("loaded_models"))
+    except Exception:
+        pass
+    return False
+
+
+def _release_engine() -> bool:
+    """Free all of YuE2's VRAM (weights + VAE + allocator cache). Caller must hold _gpu_lock."""
+    global _engine
+    if _engine is None:
+        return False
+    import gc
+    import torch
+    _engine = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+    print(f"[yield] released YuE2 engine, VRAM now {torch.cuda.memory_reserved() / 1e9:.2f} GB reserved", flush=True)
+    _broadcast("engine_state", {"loaded": False})
+    return True
+
+
+def _ensure_engine():
+    """Lazily (re)load the engine. Caller must hold _gpu_lock."""
+    global _engine
+    if _engine is None:
+        _engine = YuE2V620Engine(ar_quant="w4")
+        print(f"[yield] engine reloaded in {_engine.load_seconds:.2f}s", flush=True)
+        _broadcast("engine_state", {"loaded": True})
+    return _engine
+
+
+def _yield_watcher():
+    """When a request hits the router (model loading/loaded) and we're idle, hand the GPU over."""
+    while True:
+        time.sleep(1.0)
+        try:
+            cfg = _get_settings()
+            if not cfg.get("yield_enabled") or _engine is None:
+                continue
+            if _gpu_lock.locked() or any(j["status"] in ("queued", "running") for j in _jobs.values()):
+                continue
+            if not _router_busy():
+                continue
+            if _gpu_lock.acquire(blocking=False):
+                try:
+                    if any(j["status"] in ("queued", "running") for j in _jobs.values()):
+                        continue
+                    _release_engine()
+                finally:
+                    _gpu_lock.release()
+        except Exception as exc:
+            print(f"[yield] watcher error: {exc}", flush=True)
+
+
 @app.on_event("startup")
 async def startup_load():
     global _engine, _songs, _event_loop
@@ -552,6 +626,7 @@ async def startup_load():
     print("Loading YuE2-3B + YuE2-Vae on V620 (ar_quant=w4)...", flush=True)
     _engine = await asyncio.to_thread(YuE2V620Engine, ar_quant="w4")
     print(f"Engine ready in {_engine.load_seconds:.2f}s!", flush=True)
+    threading.Thread(target=_yield_watcher, daemon=True).start()
 
 
 class GenerateRequest(BaseModel):
@@ -594,6 +669,7 @@ class SettingsUpdate(BaseModel):
     img_cfg: float = Field(default=1.0, ge=0.0, le=30.0)
     unload_enabled: bool = Field(default=True)
     unload_url: str = Field(default="http://127.0.0.1:8084")
+    yield_enabled: bool = Field(default=True)
 
 
 def _public_settings(cfg: dict) -> dict:
@@ -612,6 +688,7 @@ def _public_settings(cfg: dict) -> dict:
         "img_cfg": cfg["img_cfg"],
         "unload_enabled": bool(cfg.get("unload_enabled")),
         "unload_url": cfg.get("unload_url", ""),
+        "yield_enabled": bool(cfg.get("yield_enabled")),
     }
 
 
@@ -644,6 +721,7 @@ def update_settings(req: SettingsUpdate):
     cfg["img_cfg"] = req.img_cfg
     cfg["unload_enabled"] = req.unload_enabled
     cfg["unload_url"] = req.unload_url.strip().rstrip("/")
+    cfg["yield_enabled"] = req.yield_enabled
 
     _save_settings(cfg)
     return _public_settings(cfg)
@@ -837,7 +915,8 @@ async def events():
 def health():
     import torch
     return {
-        "ready": _engine is not None,
+        "ready": True,
+        "engine_loaded": _engine is not None,
         "gpu": "AMD Radeon PRO V620 (gfx1030, 32GB)",
         "vram_gb": round(torch.cuda.memory_allocated() / 1e9, 2) if torch.cuda.is_available() else 0,
         "busy": _gpu_lock.locked(),
@@ -900,7 +979,7 @@ def job_status(job_id: str):
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
-    if _engine is None:
+    if _engine is None and not _get_settings().get("yield_enabled"):
         raise HTTPException(503, "Engine is still loading")
     job_id = uuid.uuid4().hex[:10]
     seed = req.seed if req.seed is not None else random.randint(1, 2_000_000)
@@ -957,6 +1036,10 @@ def generate(req: GenerateRequest):
                 job["detail"] = "Freeing GPU memory..."
                 _broadcast("job_update", {"job": dict(job)})
                 _unload_external_models()
+                if _engine is None:
+                    job["detail"] = "Reloading model into VRAM..."
+                    _broadcast("job_update", {"job": dict(job)})
+                    _ensure_engine()
                 job["started_at"] = time.time()
 
                 def on_stage(stage: str, pct: int, detail: str):
@@ -970,7 +1053,7 @@ def generate(req: GenerateRequest):
                 out_path = AUDIO_DIR / fname
                 abc_in = req.abc.strip() if req.abc and req.abc.strip() else None
                 max_sem = int(req.duration_seconds * 25) if req.duration_seconds is not None else 9000
-                res = _engine.generate_song(
+                res = _ensure_engine().generate_song(
                     style=req.style.strip(),
                     lyrics=req.lyrics.strip(),
                     cot=req.cot,
