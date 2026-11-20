@@ -712,6 +712,170 @@
     color: var(--ink-muted);
     font-size: 0.88rem;
   }
+
+  /* Settings button & modal */
+  .settings-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-secondary);
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline);
+    background: var(--bg-surface);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+  .settings-btn:hover {
+    border-color: var(--hairline-strong);
+    color: var(--ink-primary);
+    background: var(--bg-raised);
+  }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 5, 6, 0.74);
+    backdrop-filter: blur(6px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-card {
+    width: 100%;
+    max-width: 580px;
+    max-height: 90vh;
+    background: var(--bg-surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .modal-head h3 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.45rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  .modal-body {
+    padding: 18px 22px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .modal-sec {
+    background: var(--bg-void);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-md);
+    padding: 15px 16px;
+  }
+  .modal-sec-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .modal-sec-title {
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .modal-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .modal-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .modal-field { margin-bottom: 10px; }
+  .modal-field:last-child { margin-bottom: 0; }
+  .modal-field input[type="password"] {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-md);
+    color: var(--ink-primary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 10px 12px;
+    outline: none;
+  }
+  .modal-field input[type="password"]:focus {
+    border-color: rgba(245, 158, 11, 0.65);
+  }
+  .key-badge {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.25);
+    padding: 2px 7px;
+    border-radius: 999px;
+  }
+  .modal-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 22px;
+    border-top: 1px solid var(--hairline);
+    background: var(--bg-surface);
+    gap: 12px;
+  }
+  .modal-status {
+    font-size: 0.78rem;
+    color: var(--ink-secondary);
+    min-height: 1.1em;
+  }
+  .modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn-ghost {
+    border: 1px solid var(--hairline-strong);
+    background: transparent;
+    color: var(--ink-secondary);
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .btn-ghost:hover { color: var(--ink-primary); background: var(--bg-raised); }
+  .btn-save {
+    border: none;
+    background: var(--accent);
+    color: #0b0b0c;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 9px 16px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .btn-save:hover { filter: brightness(1.08); }
   @media (prefers-reduced-motion: reduce) {
     .pulse-bars span { animation: none; height: 10px; }
   }
@@ -884,6 +1048,10 @@ Living for the music that our hands have made</textarea>
       </div>
       <div class="feed-tools">
         <input id="searchBox" class="search-input" type="text" placeholder="Filter tracks..." oninput="renderSongs()" />
+        <button type="button" class="settings-btn" onclick="openSettings()" title="Provider &amp; Model Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </button>
       </div>
     </div>
 
@@ -950,6 +1118,110 @@ Living for the music that our hands have made</textarea>
     </a>
   </div>
 </footer>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-backdrop" id="settingsModal" onclick="if(event.target===this) closeSettings()">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <h3 id="settingsTitle">Studio Settings</h3>
+      <button type="button" class="text-action" onclick="closeSettings()" style="font-size:1.2rem;line-height:1" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-sec">
+        <div class="modal-sec-head">
+          <span class="modal-sec-title">LLM Provider &middot; Auto-Titling &amp; Cover Prompts</span>
+          <button type="button" class="pill" id="testLlmBtn" onclick="testLlmSettings()">Test LLM</button>
+        </div>
+        <div class="modal-grid modal-field">
+          <div>
+            <div class="field-row"><label class="field-label" for="setLlmProv">Provider</label></div>
+            <select id="setLlmProv" onchange="onLlmProvChange()">
+              <option value="openai">OpenAI-compatible (llama.cpp / vLLM / OpenAI)</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-row"><label class="field-label" for="setLlmMaxTok">Max Tokens</label></div>
+            <input id="setLlmMaxTok" type="number" min="64" max="32768" value="4096" />
+          </div>
+        </div>
+        <div class="modal-field">
+          <div class="field-row"><label class="field-label" for="setLlmUrl">Base URL</label></div>
+          <input id="setLlmUrl" type="text" placeholder="http://192.168.1.142:18081" />
+        </div>
+        <div class="modal-grid modal-field">
+          <div>
+            <div class="field-row"><label class="field-label" for="setLlmModel">Model</label></div>
+            <input id="setLlmModel" type="text" placeholder="maple-cpu" />
+          </div>
+          <div>
+            <div class="field-row">
+              <label class="field-label" for="setLlmKey">API Key</label>
+              <span class="key-badge" id="llmKeyBadge" style="display:none">Saved</span>
+            </div>
+            <input id="setLlmKey" type="password" placeholder="Leave blank to keep existing" autocomplete="off" />
+          </div>
+        </div>
+        <div id="testLlmOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary);margin-top:6px"></div>
+      </div>
+
+      <div class="modal-sec">
+        <div class="modal-sec-head">
+          <span class="modal-sec-title">Image Provider &middot; Album Cover Art</span>
+        </div>
+        <div class="modal-grid modal-field">
+          <div>
+            <div class="field-row"><label class="field-label" for="setImgProv">Provider</label></div>
+            <select id="setImgProv" onchange="onImgProvChange()">
+              <option value="sdapi">SD WebUI / Forge / sd.cpp (sdapi)</option>
+              <option value="openai">OpenAI Images</option>
+              <option value="openrouter">OpenRouter Image</option>
+              <option value="fal">fal.ai</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-row"><label class="field-label" for="setImgModel">Model / Endpoint</label></div>
+            <input id="setImgModel" type="text" placeholder="qwen-image-2.1-turbo" />
+          </div>
+        </div>
+        <div class="modal-field">
+          <div class="field-row"><label class="field-label" for="setImgUrl">Base URL</label></div>
+          <input id="setImgUrl" type="text" placeholder="http://192.168.1.142:8080" />
+        </div>
+        <div class="modal-field">
+          <div class="field-row">
+            <label class="field-label" for="setImgKey">API Key</label>
+            <span class="key-badge" id="imgKeyBadge" style="display:none">Saved</span>
+          </div>
+          <input id="setImgKey" type="password" placeholder="Leave blank to keep existing" autocomplete="off" />
+        </div>
+        <div class="modal-grid-3 modal-field">
+          <div>
+            <div class="field-row"><label class="field-label" for="setImgSize">Size (px)</label></div>
+            <input id="setImgSize" type="number" min="256" max="2048" step="64" value="768" />
+          </div>
+          <div id="imgStepsWrap">
+            <div class="field-row"><label class="field-label" for="setImgSteps">Steps</label></div>
+            <input id="setImgSteps" type="number" min="1" max="100" value="6" />
+          </div>
+          <div id="imgCfgWrap">
+            <div class="field-row"><label class="field-label" for="setImgCfg">CFG Scale</label></div>
+            <input id="setImgCfg" type="number" min="0" max="30" step="0.5" value="1.0" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="modal-status" id="settingsStatus">Saved locally to library/settings.json</span>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeSettings()">Close</button>
+        <button type="button" class="btn-save" id="saveSettingsBtn" onclick="saveSettings()">Save settings</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <audio id="audioEl" crossorigin="anonymous"></audio>
 
@@ -1299,13 +1571,144 @@ audio.ontimeupdate = () => {
 };
 audio.onended = () => nextSong();
 
-// Keyboard shortcuts: Space = play/pause, Left/Right = scrub 5s
+// Keyboard shortcuts: Escape = close modal, Space = play/pause, Left/Right = scrub 5s
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeSettings(); return; }
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   else if (e.code === 'ArrowRight' && audio.duration) { audio.currentTime = Math.min(audio.duration, audio.currentTime + 5); }
   else if (e.code === 'ArrowLeft' && audio.duration) { audio.currentTime = Math.max(0, audio.currentTime - 5); }
 });
+
+const LLM_HINTS = {
+  openai:     { url: 'http://192.168.1.142:18081 or https://api.openai.com/v1', model: 'maple-cpu or gpt-4o-mini' },
+  openrouter: { url: 'https://openrouter.ai/api/v1 (optional)', model: 'openai/gpt-4o-mini' },
+  anthropic:  { url: 'https://api.anthropic.com (optional)', model: 'claude-3-5-haiku-latest' },
+  ollama:     { url: 'http://localhost:11434', model: 'qwen2.5:7b' },
+};
+const IMG_HINTS = {
+  sdapi:      { url: 'http://192.168.1.142:8080', model: 'qwen-image-2.1-turbo' },
+  openai:     { url: 'https://api.openai.com/v1 (optional)', model: 'gpt-image-1' },
+  openrouter: { url: 'https://openrouter.ai/api/v1 (optional)', model: 'google/gemini-2.5-flash-image-preview' },
+  fal:        { url: 'https://fal.run (optional)', model: 'fal-ai/flux/schnell' },
+};
+
+function onLlmProvChange() {
+  const p = document.getElementById('setLlmProv').value;
+  const h = LLM_HINTS[p] || LLM_HINTS.openai;
+  document.getElementById('setLlmUrl').placeholder = h.url;
+  document.getElementById('setLlmModel').placeholder = h.model;
+}
+
+function onImgProvChange() {
+  const p = document.getElementById('setImgProv').value;
+  const h = IMG_HINTS[p] || IMG_HINTS.sdapi;
+  document.getElementById('setImgUrl').placeholder = h.url;
+  document.getElementById('setImgModel').placeholder = h.model;
+  const isSd = p === 'sdapi';
+  document.getElementById('imgStepsWrap').style.opacity = isSd ? '1' : '0.35';
+  document.getElementById('imgCfgWrap').style.opacity = isSd ? '1' : '0.35';
+}
+
+async function openSettings() {
+  const modal = document.getElementById('settingsModal');
+  document.getElementById('settingsStatus').textContent = 'Loading...';
+  document.getElementById('testLlmOut').textContent = '';
+  modal.classList.add('open');
+  try {
+    const r = await fetch('/api/settings');
+    const s = await r.json();
+    document.getElementById('setLlmProv').value = s.llm_provider || 'openai';
+    document.getElementById('setLlmUrl').value = s.llm_url || '';
+    document.getElementById('setLlmModel').value = s.llm_model || '';
+    document.getElementById('setLlmKey').value = '';
+    document.getElementById('llmKeyBadge').style.display = s.llm_api_key_set ? 'inline-block' : 'none';
+    document.getElementById('setLlmMaxTok').value = s.llm_max_tokens || 4096;
+
+    document.getElementById('setImgProv').value = s.img_provider || 'sdapi';
+    document.getElementById('setImgUrl').value = s.img_url || '';
+    document.getElementById('setImgModel').value = s.img_model || '';
+    document.getElementById('setImgKey').value = '';
+    document.getElementById('imgKeyBadge').style.display = s.img_api_key_set ? 'inline-block' : 'none';
+    document.getElementById('setImgSize').value = s.img_size || 768;
+    document.getElementById('setImgSteps').value = s.img_steps || 6;
+    document.getElementById('setImgCfg').value = s.img_cfg ?? 1.0;
+
+    onLlmProvChange();
+    onImgProvChange();
+    document.getElementById('settingsStatus').textContent = 'Saved locally to library/settings.json';
+  } catch (err) {
+    document.getElementById('settingsStatus').textContent = 'Failed to load settings';
+  }
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('saveSettingsBtn');
+  const st = document.getElementById('settingsStatus');
+  btn.disabled = true;
+  st.textContent = 'Saving...';
+  try {
+    const payload = {
+      llm_provider: document.getElementById('setLlmProv').value,
+      llm_url: document.getElementById('setLlmUrl').value.trim(),
+      llm_model: document.getElementById('setLlmModel').value.trim(),
+      llm_api_key: document.getElementById('setLlmKey').value.trim() || null,
+      llm_max_tokens: Number(document.getElementById('setLlmMaxTok').value) || 4096,
+      img_provider: document.getElementById('setImgProv').value,
+      img_url: document.getElementById('setImgUrl').value.trim(),
+      img_model: document.getElementById('setImgModel').value.trim(),
+      img_api_key: document.getElementById('setImgKey').value.trim() || null,
+      img_size: Number(document.getElementById('setImgSize').value) || 768,
+      img_steps: Number(document.getElementById('setImgSteps').value) || 6,
+      img_cfg: Number(document.getElementById('setImgCfg').value) || 1.0,
+    };
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const saved = await r.json();
+    document.getElementById('setLlmKey').value = '';
+    document.getElementById('setImgKey').value = '';
+    document.getElementById('llmKeyBadge').style.display = saved.llm_api_key_set ? 'inline-block' : 'none';
+    document.getElementById('imgKeyBadge').style.display = saved.img_api_key_set ? 'inline-block' : 'none';
+    st.textContent = 'Settings saved and active immediately.';
+  } catch (err) {
+    st.textContent = `Save failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testLlmSettings() {
+  const btn = document.getElementById('testLlmBtn');
+  const out = document.getElementById('testLlmOut');
+  btn.disabled = true;
+  out.style.color = 'var(--ink-secondary)';
+  out.textContent = 'Saving & testing LLM...';
+  try {
+    await saveSettings();
+    const r = await fetch('/api/settings/test-llm', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      out.style.color = '#34d399';
+      out.textContent = `OK — "${d.reply}"`;
+    } else {
+      out.style.color = 'var(--danger)';
+      out.textContent = d.error || 'LLM test failed';
+    }
+  } catch (err) {
+    out.style.color = 'var(--danger)';
+    out.textContent = `Error: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 async function delSong(id) {
   await fetch(`/api/songs/${id}`, { method: 'DELETE' });
