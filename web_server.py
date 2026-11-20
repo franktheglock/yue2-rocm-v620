@@ -39,10 +39,18 @@ META_FILE = LIB_DIR / "songs.json"
 WEB_DIR = BASE_DIR / "web_ui"
 REPORT_DIR = BASE_DIR / "report"
 
+LLM_PROVIDER = os.environ.get("YUE2_COVER_LLM_PROVIDER", "openai").lower()  # openai | anthropic | ollama
 LLM_URL = os.environ.get("YUE2_COVER_LLM_URL", "").rstrip("/")
 LLM_MODEL = os.environ.get("YUE2_COVER_LLM_MODEL", "maple-cpu")
+LLM_API_KEY = os.environ.get("YUE2_COVER_LLM_API_KEY", "")
+
+IMG_PROVIDER = os.environ.get("YUE2_COVER_IMG_PROVIDER", "sdapi").lower()   # sdapi | openai
 IMG_URL = os.environ.get("YUE2_COVER_IMG_URL", "").rstrip("/")
 IMG_MODEL = os.environ.get("YUE2_COVER_IMG_MODEL", "qwen-image-2.1-turbo")
+IMG_API_KEY = os.environ.get("YUE2_COVER_IMG_API_KEY", "")
+IMG_STEPS = int(os.environ.get("YUE2_COVER_IMG_STEPS", "6"))
+IMG_CFG = float(os.environ.get("YUE2_COVER_IMG_CFG", "1.0"))
+IMG_SIZE = int(os.environ.get("YUE2_COVER_IMG_SIZE", "768"))
 
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 COVERS_DIR.mkdir(parents=True, exist_ok=True)
@@ -138,44 +146,76 @@ def _save_songs(songs: list[dict]):
 
 
 def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
-    """Ask the optional small LAN LLM for a vivid album cover prompt."""
+    """Ask the configured LLM provider (openai-compat / anthropic / ollama) for an album cover prompt."""
     snippet = (lyrics or "").strip()[:500]
     fallback = f"Artistic vinyl album cover art inspired by {style}, mood of '{title}', atmospheric lighting, rich texture, no text, no letters, no watermark"
     if not LLM_URL:
         return fallback
+    sys_msg = (
+        "You are an album cover art director. Given a song's title, musical style, and lyrics, "
+        "write a single concise visual image-generation prompt (2-3 sentences max) for a striking "
+        "square album cover. Focus on composition, color palette, lighting, and artistic medium. "
+        "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
+    )
+    user_msg = f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}"
     try:
-        with httpx.Client(timeout=25.0) as c:
-            r = c.post(
-                f"{LLM_URL}/v1/chat/completions",
-                json={
-                    "model": LLM_MODEL,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an album cover art director. Given a song's title, musical style, and lyrics, "
-                                "write a single concise visual image-generation prompt (2-3 sentences max) for a striking "
-                                "square album cover. Focus on composition, color palette, lighting, and artistic medium. "
-                                "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}",
-                        },
-                    ],
-                    "temperature": 0.8,
-                    "max_tokens": 140,
-                },
-            )
-            r.raise_for_status()
-            txt = r.json()["choices"][0]["message"]["content"].strip()
-            # Strip any thinking tags if present
+        with httpx.Client(timeout=30.0) as c:
+            if LLM_PROVIDER == "anthropic":
+                headers = {"x-api-key": LLM_API_KEY, "anthropic-version": "2023-06-01"}
+                endpoint = LLM_URL if LLM_URL.endswith("/messages") else f"{LLM_URL}/v1/messages"
+                r = c.post(
+                    endpoint,
+                    headers=headers,
+                    json={
+                        "model": LLM_MODEL,
+                        "max_tokens": 140,
+                        "system": sys_msg,
+                        "messages": [{"role": "user", "content": user_msg}],
+                    },
+                )
+                r.raise_for_status()
+                txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text").strip()
+            elif LLM_PROVIDER == "ollama":
+                endpoint = LLM_URL if LLM_URL.endswith("/chat") else f"{LLM_URL}/api/chat"
+                r = c.post(
+                    endpoint,
+                    json={
+                        "model": LLM_MODEL,
+                        "stream": False,
+                        "messages": [
+                            {"role": "system", "content": sys_msg},
+                            {"role": "user", "content": user_msg},
+                        ],
+                    },
+                )
+                r.raise_for_status()
+                txt = (r.json().get("message") or {}).get("content", "").strip()
+            else:
+                # OpenAI-compatible (llama.cpp, vLLM, Ollama /v1, OpenAI, OpenRouter, LM Studio, Groq)
+                headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+                endpoint = LLM_URL if LLM_URL.endswith("/chat/completions") else (
+                    f"{LLM_URL}/chat/completions" if LLM_URL.endswith("/v1") else f"{LLM_URL}/v1/chat/completions"
+                )
+                r = c.post(
+                    endpoint,
+                    headers=headers,
+                    json={
+                        "model": LLM_MODEL,
+                        "messages": [
+                            {"role": "system", "content": sys_msg},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        "temperature": 0.8,
+                        "max_tokens": 140,
+                    },
+                )
+                r.raise_for_status()
+                txt = r.json()["choices"][0]["message"]["content"].strip()
             if "</think>" in txt:
                 txt = txt.split("</think>", 1)[1].strip()
             return txt or fallback
     except Exception as exc:
-        print(f"[cover-llm] fallback ({exc})", flush=True)
+        print(f"[cover-llm:{LLM_PROVIDER}] fallback ({exc})", flush=True)
         return fallback
 
 
@@ -195,40 +235,72 @@ def _extract_b64_image(data: dict) -> Optional[str]:
 
 
 def _generate_cover_image(song_id: str, prompt: str) -> Optional[str]:
-    """Call LAN Qwen-Image / SDAPI txt2img and save PNG to library/covers/<song_id>.png."""
+    """Call configured image provider (sdapi or openai-compat /v1/images/generations) and save PNG."""
     if not IMG_URL:
         return None
     try:
         with _cover_lock:
-            with httpx.Client(timeout=180.0) as c:
-                r = c.post(
-                    f"{IMG_URL}/sdapi/v1/txt2img",
-                    json={
-                        "model": IMG_MODEL,
-                        "prompt": prompt,
-                        "width": 768,
-                        "height": 768,
-                        "steps": 6,
-                        "cfg_scale": 1.0,
-                        "seed": -1,
-                        "vae_tiling_params": {
-                            "enabled": True,
-                            "tile_size_w": 512,
-                            "tile_size_h": 512,
-                            "target_overlap": 0.5,
+            headers = {"Authorization": f"Bearer {IMG_API_KEY}"} if IMG_API_KEY else {}
+            with httpx.Client(timeout=180.0, headers=headers) as c:
+                if IMG_PROVIDER == "openai":
+                    endpoint = IMG_URL if IMG_URL.endswith("/images/generations") else (
+                        f"{IMG_URL}/images/generations" if IMG_URL.endswith("/v1") else f"{IMG_URL}/v1/images/generations"
+                    )
+                    size = f"{IMG_SIZE}x{IMG_SIZE}"
+                    r = c.post(
+                        endpoint,
+                        json={
+                            "model": IMG_MODEL,
+                            "prompt": prompt,
+                            "n": 1,
+                            "size": size,
+                            "response_format": "b64_json",
                         },
-                    },
-                )
-                r.raise_for_status()
-                b64 = _extract_b64_image(r.json())
-                if not b64:
-                    print("[cover-img] empty image payload", flush=True)
-                    return None
+                    )
+                    r.raise_for_status()
+                    payload = r.json()
+                    b64 = _extract_b64_image(payload)
+                    if b64:
+                        img_bytes = base64.b64decode(b64)
+                    else:
+                        img_url = (payload.get("data") or [{}])[0].get("url")
+                        if not img_url:
+                            print("[cover-img:openai] empty image response", flush=True)
+                            return None
+                        img_bytes = c.get(img_url).content
+                else:
+                    # Automatic1111 / Forge / sd.cpp / Qwen-Image SDAPI (/sdapi/v1/txt2img)
+                    endpoint = IMG_URL if IMG_URL.endswith("/txt2img") else f"{IMG_URL}/sdapi/v1/txt2img"
+                    r = c.post(
+                        endpoint,
+                        json={
+                            "model": IMG_MODEL,
+                            "prompt": prompt,
+                            "width": IMG_SIZE,
+                            "height": IMG_SIZE,
+                            "steps": IMG_STEPS,
+                            "cfg_scale": IMG_CFG,
+                            "seed": -1,
+                            "vae_tiling_params": {
+                                "enabled": True,
+                                "tile_size_w": 512,
+                                "tile_size_h": 512,
+                                "target_overlap": 0.5,
+                            },
+                        },
+                    )
+                    r.raise_for_status()
+                    b64 = _extract_b64_image(r.json())
+                    if not b64:
+                        print("[cover-img:sdapi] empty image payload", flush=True)
+                        return None
+                    img_bytes = base64.b64decode(b64)
+
                 out = COVERS_DIR / f"{song_id}.png"
-                out.write_bytes(base64.b64decode(b64))
+                out.write_bytes(img_bytes)
                 return f"/covers/{song_id}.png"
     except Exception as exc:
-        print(f"[cover-img] failed: {exc}", flush=True)
+        print(f"[cover-img:{IMG_PROVIDER}] failed: {exc}", flush=True)
         return None
 
 
