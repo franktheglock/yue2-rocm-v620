@@ -1,0 +1,96 @@
+# YuE2-3B ROCm Accelerator (AMD Radeon PRO V620 / RDNA2 `gfx1030`)
+
+Custom Wave32 HIP C++ kernels, FP16 NAR flow-matching runtime, Suno-inspired Studio Web UI, REST API, and MCP server for [`m-a-p/YuE2-3B`](https://huggingface.co/m-a-p/YuE2-3B) + [`m-a-p/YuE2-Vae`](https://huggingface.co/m-a-p/YuE2-Vae) on AMD ROCm GPUs.
+
+Generates a full **120-second 48 kHz stereo song in 25.4 seconds** (**25.1× faster** than stock PyTorch BF16, **4.72× faster than realtime**) on a single AMD Radeon PRO V620 (32 GB).
+
+---
+
+## Benchmarks (AMD Radeon PRO V620 · `gfx1030` · 120s 48 kHz Stereo Song)
+
+| Configuration | AR (3,000 tok) | NAR (ODE) | VAE (FP32) | **Total E2E** | **Speedup** |
+|---|---:|---:|---:|---:|---:|
+| **Stock YuE2-3B BF16** (PyTorch Eager + Math SDPA, 32-mid) | 454.0s (6.6 tok/s) | 180.6s (64 NFE) | 1.98s* | **636.6s** | 1.0× |
+| **V620 Optimized** (`cot="off"`, 32-step Midpoint, 64 NFE) | 13.82s (219.1 tok/s) | 40.21s (64 NFE) | 1.42s | **55.44s** | **11.5×** |
+| **V620 Optimized** (`cot="full"`, 1,587 ABC + 3,000 Sem, 5-mid) | 22.73s (205.8 tok/s) | 8.04s (10 NFE) | 1.41s | **32.19s** | **19.8×** |
+| **V620 Optimized** (`cot="off"`, 12-step Midpoint, 24 NFE) | 13.82s (219.1 tok/s) | 15.02s (24 NFE) | 1.42s | **30.25s** | **21.0×** |
+| **V620 Optimized** (`cot="off"`, **8-step Midpoint, 16 NFE**) | **13.82s (219.1 tok/s)** | **10.18s (16 NFE)** | **1.41s** | **25.41s** | **25.1×** |
+
+*\*Stock VAE on `gfx1030` hits an MIOpen 1D conv workspace bug (>360s hang) unless `torch.backends.cudnn.enabled = False`.*
+
+### Numerical Accuracy vs Stock BF16 / 32-Step Midpoint Reference
+| Stage & Comparison | Cosine Sim | SNR (dB) | Notes |
+|---|---:|---:|---|
+| AR Logits: **W8A16** vs BF16 | `0.99993` | `38.06 dB` | Top-1 Match |
+| AR Logits: **W4A16 (g=128)** vs BF16 | `0.99679` | `21.87 dB` | Top-1 Match, 100% Top-5 overlap |
+| NAR Precision: **FP16 (32-mid)** vs BF16 (32-mid) | `0.99993` | `38.33 dB` | Virtually identical latents |
+| NAR ODE: **12-step Midpoint** vs 32-step Midpoint | `0.99908` | `27.34 dB` | Audio Cosine `0.9970` |
+| NAR ODE: **8-step Midpoint (25.4s)** vs 32-step Midpoint | `0.99550` | `20.47 dB` | Audio Cosine `0.9857` |
+| VAE Audio: **Fused HIP `SnakeBeta`** vs PyTorch FP32 | `0.999999999999` | `102.68 dB` | `max_abs = 1.79e-5` |
+
+---
+
+## Why Stock PyTorch Is Slow on RDNA2 (`gfx1030`) & What We Built
+
+1. **Emulated BF16 → Native FP16 + Custom W4A16/W8A16 HIP GEMV (`v620_kernels.hip`):** On `gfx1030`, BF16 GEMV runs at 29.9 GB/s vs FP16 at 262 GB/s. Our 8-warp LDS-fused RMSNorm + 128-bit `uint4` W4A16 GEMV & fused SwiGLU kernels + sliced `lm_head` (32,769 allowed semantic tokens instead of 184,704) push AR decode from **6.6 → 219.1 tok/s** (**33.1×**).
+2. **Missing FlashAttention on `gfx1030` → Infinity-Cache rocBLAS + Wave32 HIP Online-Softmax:** PyTorch SDPA falls back to Math SDPA (`35.84 ms / 4.80 TFLOPS`). Our tiled split-KV attention (`BN=512` tuned for RDNA2's 128 MB Infinity Cache, zero `torch.cat` copies) hits **10.38 ms / 16.59 TFLOPS** (**3.45×** faster).
+3. **GQA-Paired Split-KV FlashDecode:** Processes both Q heads per KV head in a single block with 64-bit coalesced loads, hitting **429.1 GB/s** (84% of V620 HBM peak, `3e-5` error).
+4. **Oobleck VAE Acceleration:** Keeps both YuE2-3B and YuE2-Vae resident on 32 GB VRAM (~9.9 GB total), fuses `weight_norm`, replaces 6-kernel `SnakeBeta` with a single fused HIP kernel (**5.88×** faster), and bypasses MIOpen 1D conv workspace bugs (`1.41s` for 120s FP32 audio).
+
+---
+
+## Quick Start
+
+### 1. Prerequisites
+- AMD ROCm GPU (tested on Radeon PRO V620 / `gfx1030`, 24 GB+ VRAM recommended)
+- PyTorch with ROCm (`torch` + `hipcc`)
+- `yue2_infer` wheel from [`m-a-p/YuE2-3B`](https://huggingface.co/m-a-p/YuE2-3B)
+
+```bash
+# Install dependencies (using your ROCm PyTorch Python)
+pip install -e . --no-deps
+pip install transformers==4.57.6 huggingface-hub==0.36.2 safetensors==0.7.0 \
+            tiktoken==0.12.0 soundfile accelerate fastapi uvicorn httpx mcp
+
+# Install yue2_infer wheel (without overwriting ROCm torch)
+hf download m-a-p/YuE2-3B yue2_infer-0.1.5-py3-none-any.whl --local-dir .
+pip install --no-deps ./yue2_infer-0.1.5-py3-none-any.whl
+
+# Compile custom HIP kernels (auto-detects GPU arch, or set GPU_ARCH=gfx1030 / gfx1100)
+./build.sh
+```
+
+### 2. CLI Generation
+```bash
+python run_yue2.py --ar-quant w4 --cot off --ode-steps 8 --ode-method midpoint --max-seconds 120
+# Full symbolic ABC score planning:
+python run_yue2.py --ar-quant w4 --cot full --ode-steps 5 --ode-method midpoint --max-seconds 120
+```
+
+### 3. Studio Web UI & REST API
+```bash
+python web_server.py
+# Open http://localhost:8789/  (Swagger API docs at /docs)
+```
+Optional AI album cover art (runs in parallel on a separate LAN host):
+```bash
+export YUE2_COVER_LLM_URL="http://192.168.1.142:18081"
+export YUE2_COVER_IMG_URL="http://192.168.1.142:8080"
+python web_server.py
+```
+
+### 4. MCP Server (stdio or LAN Streamable HTTP)
+```bash
+# Stdio (for Claude Code / Cursor / Antigravity):
+python mcp_server.py
+
+# Streamable HTTP on LAN:
+YUE2_API_URL=http://127.0.0.1:8789 python mcp_server.py --http --host 0.0.0.0 --port 8790
+```
+Songs triggered via MCP stream live into the open Web UI over SSE (`/api/events`).
+
+---
+
+## License
+- Code in this repository: MIT.
+- Model weights (`m-a-p/YuE2-3B` and `m-a-p/YuE2-Vae`): [CC BY-NC 4.0](https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE) (downloaded separately from Hugging Face).

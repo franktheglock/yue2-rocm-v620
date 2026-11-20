@@ -1,0 +1,30 @@
+# Virtual environments & Python caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Compiled shared libraries
+*.so
+
+# Model weights & wheels (downloaded from Hugging Face)
+YuE2-3B
+YuE2-Vae
+YuE2-3B/
+YuE2-Vae/
+*.safetensors
+*.whl
+_wheel_inspect/
+
+# Generated songs, covers, and local benchmark artifacts
+library/
+outputs/
+report/
+*.flac
+*.wav
+*.mp3
+*.png
+
+# Scratch / probe scripts
+bench_*.py
+ref_modeling_yue2.py
