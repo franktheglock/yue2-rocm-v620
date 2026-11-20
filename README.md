@@ -72,26 +72,28 @@ python run_yue2.py --ar-quant w4 --cot full --ode-steps 5 --ode-method midpoint 
 python web_server.py
 # Open http://localhost:8789/  (Swagger API docs at /docs)
 ```
-Optional AI album cover art (runs in parallel with audio generation; supports OpenAI-compatible, Anthropic, and Ollama LLMs + SDAPI/A1111/Forge and OpenAI `/v1/images/generations` image servers):
+Optional AI song auto-naming & album cover art (runs in parallel with audio generation; supports **OpenAI-compatible**, **OpenRouter**, **Anthropic**, and **Ollama** LLMs + **SDAPI/A1111/Forge**, **OpenAI**, **OpenRouter**, and **fal.ai** image gen):
 ```bash
 # Example 1: Local llama.cpp + SDAPI / Qwen-Image
-export YUE2_COVER_LLM_PROVIDER="openai"          # openai | anthropic | ollama
+export YUE2_COVER_LLM_PROVIDER="openai"          # openai | openrouter | anthropic | ollama
 export YUE2_COVER_LLM_URL="http://192.168.1.142:18081"
 export YUE2_COVER_LLM_MODEL="maple-cpu"
-export YUE2_COVER_IMG_PROVIDER="sdapi"           # sdapi | openai
+export YUE2_COVER_IMG_PROVIDER="sdapi"           # sdapi | openai | openrouter | fal
 export YUE2_COVER_IMG_URL="http://192.168.1.142:8080"
 export YUE2_COVER_IMG_MODEL="qwen-image-2.1-turbo"
 
-# Example 2: OpenAI / OpenRouter / Together (set API keys)
-# export YUE2_COVER_LLM_PROVIDER="openai"
-# export YUE2_COVER_LLM_URL="https://api.openai.com"
-# export YUE2_COVER_LLM_MODEL="gpt-4o-mini"
-# export YUE2_COVER_LLM_API_KEY="sk-..."
-# export YUE2_COVER_IMG_PROVIDER="openai"
-# export YUE2_COVER_IMG_URL="https://api.openai.com"
-# export YUE2_COVER_IMG_MODEL="gpt-image-1"
-# export YUE2_COVER_IMG_API_KEY="sk-..."
-# export YUE2_COVER_IMG_SIZE="1024"
+# Example 2: OpenRouter (LLM + Image Gen)
+# export YUE2_COVER_LLM_PROVIDER="openrouter"
+# export YUE2_COVER_LLM_MODEL="google/gemini-2.5-flash"
+# export YUE2_COVER_LLM_API_KEY="sk-or-..."
+# export YUE2_COVER_IMG_PROVIDER="openrouter"
+# export YUE2_COVER_IMG_MODEL="google/gemini-2.5-flash-image-preview"
+# export YUE2_COVER_IMG_API_KEY="sk-or-..."
+
+# Example 3: fal.ai Image Gen (Flux)
+# export YUE2_COVER_IMG_PROVIDER="fal"
+# export YUE2_COVER_IMG_MODEL="fal-ai/flux/schnell"
+# export YUE2_COVER_IMG_API_KEY="fal_..."
 
 python web_server.py
 ```

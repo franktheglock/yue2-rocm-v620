@@ -1200,7 +1200,7 @@ function renderSongs() {
           </div>
         </div>
         <div class="t-actions" onclick="event.stopPropagation()">
-          <a class="btn-icon" href="${s.audio_url}" download title="Download lossless FLAC">${ICON_DL}</a>
+          <a class="btn-icon" href="/api/songs/${s.id}/download" download="${esc(s.title || 'song')}.flac" title="Download lossless FLAC">${ICON_DL}</a>
           <button type="button" class="btn-icon danger" onclick="delSong('${s.id}')" title="Remove track">${ICON_TRASH}</button>
         </div>
       </div>`;
@@ -1274,7 +1274,9 @@ function playIndex(idx) {
   document.getElementById('pCover').innerHTML = coverHTML(s, false);
   document.getElementById('pTitle').textContent = s.title;
   document.getElementById('pSub').textContent = s.style;
-  document.getElementById('pDownload').href = s.audio_url;
+  const dl = document.getElementById('pDownload');
+  dl.href = `/api/songs/${s.id}/download`;
+  dl.download = `${s.title || 'song'}.flac`;
   renderSongs();
 }
 

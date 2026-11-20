@@ -39,12 +39,12 @@ META_FILE = LIB_DIR / "songs.json"
 WEB_DIR = BASE_DIR / "web_ui"
 REPORT_DIR = BASE_DIR / "report"
 
-LLM_PROVIDER = os.environ.get("YUE2_COVER_LLM_PROVIDER", "openai").lower()  # openai | anthropic | ollama
+LLM_PROVIDER = os.environ.get("YUE2_COVER_LLM_PROVIDER", "openai").lower()  # openai | openrouter | anthropic | ollama
 LLM_URL = os.environ.get("YUE2_COVER_LLM_URL", "").rstrip("/")
 LLM_MODEL = os.environ.get("YUE2_COVER_LLM_MODEL", "maple-cpu")
 LLM_API_KEY = os.environ.get("YUE2_COVER_LLM_API_KEY", "")
 
-IMG_PROVIDER = os.environ.get("YUE2_COVER_IMG_PROVIDER", "sdapi").lower()   # sdapi | openai
+IMG_PROVIDER = os.environ.get("YUE2_COVER_IMG_PROVIDER", "sdapi").lower()   # sdapi | openai | openrouter | fal
 IMG_URL = os.environ.get("YUE2_COVER_IMG_URL", "").rstrip("/")
 IMG_MODEL = os.environ.get("YUE2_COVER_IMG_MODEL", "qwen-image-2.1-turbo")
 IMG_API_KEY = os.environ.get("YUE2_COVER_IMG_API_KEY", "")
@@ -146,14 +146,19 @@ def _save_songs(songs: list[dict]):
 
 
 def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[str]:
-    """Call the configured LLM provider (openai-compat / anthropic / ollama)."""
-    if not LLM_URL:
+    """Call the configured LLM provider (openai-compat / openrouter / anthropic / ollama)."""
+    effective_url = LLM_URL
+    if not effective_url and LLM_PROVIDER == "openrouter" and LLM_API_KEY:
+        effective_url = "https://openrouter.ai/api/v1"
+    elif not effective_url and LLM_PROVIDER == "anthropic" and LLM_API_KEY:
+        effective_url = "https://api.anthropic.com"
+    if not effective_url:
         return None
     try:
         with httpx.Client(timeout=30.0) as c:
             if LLM_PROVIDER == "anthropic":
                 headers = {"x-api-key": LLM_API_KEY, "anthropic-version": "2023-06-01"}
-                endpoint = LLM_URL if LLM_URL.endswith("/messages") else f"{LLM_URL}/v1/messages"
+                endpoint = effective_url if effective_url.endswith("/messages") else f"{effective_url}/v1/messages"
                 r = c.post(
                     endpoint,
                     headers=headers,
@@ -167,7 +172,7 @@ def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[st
                 r.raise_for_status()
                 txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text").strip()
             elif LLM_PROVIDER == "ollama":
-                endpoint = LLM_URL if LLM_URL.endswith("/chat") else f"{LLM_URL}/api/chat"
+                endpoint = effective_url if effective_url.endswith("/chat") else f"{effective_url}/api/chat"
                 r = c.post(
                     endpoint,
                     json={
@@ -183,24 +188,25 @@ def _call_llm(sys_msg: str, user_msg: str, max_tokens: int = 140) -> Optional[st
                 txt = (r.json().get("message") or {}).get("content", "").strip()
             else:
                 headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
-                endpoint = LLM_URL if LLM_URL.endswith("/chat/completions") else (
-                    f"{LLM_URL}/chat/completions" if LLM_URL.endswith("/v1") else f"{LLM_URL}/v1/chat/completions"
+                if LLM_PROVIDER == "openrouter":
+                    headers.update({"HTTP-Referer": "https://github.com/franktheglock/yue2-rocm-v620", "X-Title": "YuE2 Studio"})
+                endpoint = effective_url if effective_url.endswith("/chat/completions") else (
+                    f"{effective_url}/chat/completions" if effective_url.endswith("/v1") else f"{effective_url}/v1/chat/completions"
                 )
-                r = c.post(
-                    endpoint,
-                    headers=headers,
-                    json={
-                        "model": LLM_MODEL,
-                        "messages": [
-                            {"role": "system", "content": sys_msg},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        "temperature": 0.8,
-                        "max_tokens": max_tokens,
-                    },
-                )
+                body = {
+                    "model": LLM_MODEL,
+                    "messages": [
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "temperature": 0.8,
+                    "max_tokens": max_tokens,
+                }
+                if LLM_PROVIDER == "openai" and "openai.com" not in effective_url and "openrouter.ai" not in effective_url:
+                    body["chat_template_kwargs"] = {"enable_thinking": False}
+                r = c.post(endpoint, headers=headers, json=body)
                 r.raise_for_status()
-                txt = r.json()["choices"][0]["message"]["content"].strip()
+                txt = (r.json()["choices"][0]["message"].get("content") or "").strip()
             if "</think>" in txt:
                 txt = txt.split("</think>", 1)[1].strip()
             return txt or None
@@ -260,26 +266,100 @@ def _extract_b64_image(data: dict) -> Optional[str]:
     return raw
 
 
+def _decode_or_fetch_image(c: httpx.Client, val: str) -> Optional[bytes]:
+    if not val or not isinstance(val, str):
+        return None
+    if val.startswith("data:") and "," in val:
+        return base64.b64decode(val.split(",", 1)[1])
+    if val.startswith("http://") or val.startswith("https://"):
+        r = c.get(val)
+        r.raise_for_status()
+        return r.content
+    return base64.b64decode(val)
+
+
 def _generate_cover_image(song_id: str, prompt: str) -> Optional[str]:
-    """Call configured image provider (sdapi or openai-compat /v1/images/generations) and save PNG."""
-    if not IMG_URL:
+    """Call configured image provider (sdapi | openai | openrouter | fal) and save PNG."""
+    effective_url = IMG_URL
+    if not effective_url and IMG_PROVIDER == "openrouter" and IMG_API_KEY:
+        effective_url = "https://openrouter.ai/api/v1"
+    elif not effective_url and IMG_PROVIDER == "fal" and IMG_API_KEY:
+        effective_url = "https://fal.run"
+    if not effective_url:
         return None
     try:
         with _cover_lock:
-            headers = {"Authorization": f"Bearer {IMG_API_KEY}"} if IMG_API_KEY else {}
-            with httpx.Client(timeout=180.0, headers=headers) as c:
-                if IMG_PROVIDER == "openai":
-                    endpoint = IMG_URL if IMG_URL.endswith("/images/generations") else (
-                        f"{IMG_URL}/images/generations" if IMG_URL.endswith("/v1") else f"{IMG_URL}/v1/images/generations"
+            with httpx.Client(timeout=180.0, follow_redirects=True) as c:
+                img_bytes: Optional[bytes] = None
+
+                if IMG_PROVIDER == "openrouter":
+                    headers = {
+                        "Authorization": f"Bearer {IMG_API_KEY}",
+                        "HTTP-Referer": "https://github.com/franktheglock/yue2-rocm-v620",
+                        "X-Title": "YuE2 Studio",
+                    }
+                    endpoint = effective_url if effective_url.endswith("/chat/completions") else (
+                        f"{effective_url}/chat/completions" if effective_url.endswith("/v1") else f"{effective_url}/v1/chat/completions"
                     )
-                    size = f"{IMG_SIZE}x{IMG_SIZE}"
                     r = c.post(
                         endpoint,
+                        headers=headers,
+                        json={
+                            "model": IMG_MODEL,
+                            "modalities": ["image", "text"],
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    )
+                    r.raise_for_status()
+                    msg = (r.json().get("choices") or [{}])[0].get("message") or {}
+                    imgs = msg.get("images") or []
+                    if imgs:
+                        first = imgs[0]
+                        src = first.get("image_url", {}).get("url") if isinstance(first, dict) else first
+                        img_bytes = _decode_or_fetch_image(c, src)
+                    elif isinstance(msg.get("content"), list):
+                        for part in msg["content"]:
+                            if isinstance(part, dict) and part.get("type") == "image_url":
+                                img_bytes = _decode_or_fetch_image(c, part.get("image_url", {}).get("url"))
+                                if img_bytes:
+                                    break
+
+                elif IMG_PROVIDER == "fal":
+                    headers = {"Authorization": f"Key {IMG_API_KEY}"}
+                    model_slug = IMG_MODEL.lstrip("/")
+                    endpoint = effective_url if model_slug in effective_url else f"{effective_url}/{model_slug}"
+                    r = c.post(
+                        endpoint,
+                        headers=headers,
+                        json={
+                            "prompt": prompt,
+                            "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
+                            "num_images": 1,
+                        },
+                    )
+                    r.raise_for_status()
+                    payload = r.json()
+                    imgs = payload.get("images") or []
+                    if imgs:
+                        first = imgs[0]
+                        src = first.get("url") if isinstance(first, dict) else first
+                        img_bytes = _decode_or_fetch_image(c, src)
+                    elif isinstance(payload.get("image"), dict) and payload["image"].get("url"):
+                        img_bytes = _decode_or_fetch_image(c, payload["image"]["url"])
+
+                elif IMG_PROVIDER == "openai":
+                    headers = {"Authorization": f"Bearer {IMG_API_KEY}"} if IMG_API_KEY else {}
+                    endpoint = effective_url if effective_url.endswith("/images/generations") else (
+                        f"{effective_url}/images/generations" if effective_url.endswith("/v1") else f"{effective_url}/v1/images/generations"
+                    )
+                    r = c.post(
+                        endpoint,
+                        headers=headers,
                         json={
                             "model": IMG_MODEL,
                             "prompt": prompt,
                             "n": 1,
-                            "size": size,
+                            "size": f"{IMG_SIZE}x{IMG_SIZE}",
                             "response_format": "b64_json",
                         },
                     )
@@ -290,15 +370,15 @@ def _generate_cover_image(song_id: str, prompt: str) -> Optional[str]:
                         img_bytes = base64.b64decode(b64)
                     else:
                         img_url = (payload.get("data") or [{}])[0].get("url")
-                        if not img_url:
-                            print("[cover-img:openai] empty image response", flush=True)
-                            return None
-                        img_bytes = c.get(img_url).content
+                        img_bytes = _decode_or_fetch_image(c, img_url)
+
                 else:
                     # Automatic1111 / Forge / sd.cpp / Qwen-Image SDAPI (/sdapi/v1/txt2img)
-                    endpoint = IMG_URL if IMG_URL.endswith("/txt2img") else f"{IMG_URL}/sdapi/v1/txt2img"
+                    headers = {"Authorization": f"Bearer {IMG_API_KEY}"} if IMG_API_KEY else {}
+                    endpoint = effective_url if effective_url.endswith("/txt2img") else f"{effective_url}/sdapi/v1/txt2img"
                     r = c.post(
                         endpoint,
+                        headers=headers,
                         json={
                             "model": IMG_MODEL,
                             "prompt": prompt,
@@ -317,11 +397,12 @@ def _generate_cover_image(song_id: str, prompt: str) -> Optional[str]:
                     )
                     r.raise_for_status()
                     b64 = _extract_b64_image(r.json())
-                    if not b64:
-                        print("[cover-img:sdapi] empty image payload", flush=True)
-                        return None
-                    img_bytes = base64.b64decode(b64)
+                    if b64:
+                        img_bytes = base64.b64decode(b64)
 
+                if not img_bytes:
+                    print(f"[cover-img:{IMG_PROVIDER}] empty image payload", flush=True)
+                    return None
                 out = COVERS_DIR / f"{song_id}.png"
                 out.write_bytes(img_bytes)
                 return f"/covers/{song_id}.png"
@@ -564,6 +645,19 @@ def health():
 @app.get("/api/songs")
 def list_songs():
     return {"songs": _songs}
+
+
+@app.get("/api/songs/{song_id}/download")
+def download_song(song_id: str):
+    found = next((s for s in _songs if s["id"] == song_id), None)
+    if not found or not found.get("audio_url"):
+        raise HTTPException(404, "Song not found")
+    fpath = AUDIO_DIR / Path(found["audio_url"]).name
+    if not fpath.is_file():
+        raise HTTPException(404, "Audio file missing")
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", (found.get("title") or "song")).strip(" .") or "song"
+    ext = fpath.suffix or ".flac"
+    return FileResponse(fpath, filename=f"{safe_title}{ext}", media_type="audio/flac")
 
 
 @app.delete("/api/songs/{song_id}")
