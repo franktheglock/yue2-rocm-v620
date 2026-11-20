@@ -130,3 +130,12 @@ Songs triggered via MCP stream live into the open Web UI over SSE (`/api/events`
 ## License
 - Code in this repository: MIT.
 - Model weights (`m-a-p/YuE2-3B` and `m-a-p/YuE2-Vae`): [CC BY-NC 4.0](https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE) (downloaded separately from Hugging Face).
+
+---
+
+## Sharing the GPU with a model router (llama.cpp router / Hermes Console)
+
+If another service on the same machine loads LLMs onto the same GPU, YuE2 Studio can free that VRAM automatically. Before every generation it queries the router (default `http://127.0.0.1:8084`) and unloads every loaded model. The router reloads models on demand afterwards.
+
+- Configure it in **Settings → Shared GPU · Model Router**, or via `YUE2_UNLOAD_URL` / `YUE2_UNLOAD_ENABLED=0`.
+- Manual trigger: `POST /api/settings/unload-now`.

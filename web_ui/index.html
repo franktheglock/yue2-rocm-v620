@@ -1226,6 +1226,25 @@ Living for the music that our hands have made</textarea>
         </div>
       </div>
     </div>
+    <div class="modal-body" style="padding-top:0">
+      <div class="modal-sec">
+        <div class="modal-sec-head">
+          <span class="modal-sec-title">Shared GPU &middot; Model Router</span>
+          <button type="button" class="pill" onclick="unloadNow()">Unload now</button>
+        </div>
+        <div class="modal-field">
+          <label style="display:inline-flex;align-items:center;gap:7px;font-size:0.8rem;color:var(--ink-secondary);cursor:pointer">
+            <input id="setUnloadOn" type="checkbox" style="width:auto;accent-color:var(--accent)" />
+            Unload loaded models on the router before every generation
+          </label>
+        </div>
+        <div class="modal-field">
+          <div class="field-row"><label class="field-label" for="setUnloadUrl">Router API URL</label></div>
+          <input id="setUnloadUrl" type="text" placeholder="http://127.0.0.1:8084" />
+        </div>
+        <div id="unloadOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary)"></div>
+      </div>
+    </div>
     <div class="modal-foot">
       <span class="modal-status" id="settingsStatus">Saved locally to library/settings.json</span>
       <div class="modal-actions">
@@ -1700,6 +1719,8 @@ async function openSettings() {
     document.getElementById('setImgSize').value = s.img_size || 768;
     document.getElementById('setImgSteps').value = s.img_steps || 6;
     document.getElementById('setImgCfg').value = s.img_cfg ?? 1.0;
+    document.getElementById('setUnloadOn').checked = !!s.unload_enabled;
+    document.getElementById('setUnloadUrl').value = s.unload_url || '';
 
     onLlmProvChange();
     onImgProvChange();
@@ -1732,6 +1753,8 @@ async function saveSettings() {
       img_size: Number(document.getElementById('setImgSize').value) || 768,
       img_steps: Number(document.getElementById('setImgSteps').value) || 6,
       img_cfg: Number(document.getElementById('setImgCfg').value) || 1.0,
+      unload_enabled: document.getElementById('setUnloadOn').checked,
+      unload_url: document.getElementById('setUnloadUrl').value.trim(),
     };
     const r = await fetch('/api/settings', {
       method: 'POST',
@@ -1749,6 +1772,21 @@ async function saveSettings() {
     st.textContent = `Save failed: ${err.message}`;
   } finally {
     btn.disabled = false;
+  }
+}
+
+async function unloadNow() {
+  const out = document.getElementById('unloadOut');
+  out.style.color = 'var(--ink-secondary)';
+  out.textContent = 'Saving & unloading...';
+  try {
+    await saveSettings();
+    const d = await (await fetch('/api/settings/unload-now', { method: 'POST' })).json();
+    out.style.color = '#34d399';
+    out.textContent = d.unloaded.length ? `Unloaded: ${d.unloaded.join(', ')}` : 'Nothing was loaded.';
+  } catch (err) {
+    out.style.color = 'var(--danger)';
+    out.textContent = `Error: ${err.message}`;
   }
 }
 

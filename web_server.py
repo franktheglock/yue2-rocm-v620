@@ -53,6 +53,9 @@ _DEFAULT_SETTINGS = {
     "img_steps": int(os.environ.get("YUE2_COVER_IMG_STEPS", "6")),
     "img_cfg": float(os.environ.get("YUE2_COVER_IMG_CFG", "1.0")),
     "img_size": int(os.environ.get("YUE2_COVER_IMG_SIZE", "768")),
+    # Model-router coordination (llama.cpp router / Hermes Console): free shared GPU VRAM before each generation
+    "unload_enabled": os.environ.get("YUE2_UNLOAD_ENABLED", "1") not in ("0", "false", "False", ""),
+    "unload_url": os.environ.get("YUE2_UNLOAD_URL", "http://127.0.0.1:8084").rstrip("/"),
 }
 
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -176,6 +179,61 @@ def _load_songs() -> list[dict]:
 def _save_songs(songs: list[dict]):
     with _meta_lock:
         META_FILE.write_text(json.dumps(songs, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _unload_external_models() -> list[str]:
+    """Unload every model currently loaded on the user's model-router API (e.g. :8084) to free shared VRAM.
+
+    Works with llama.cpp router mode (/v1/models with status.value, POST /models/unload) and Hermes Console
+    (/api/status, POST /api/models/<id>/unload). Never raises; returns the list of unloaded model ids.
+    """
+    cfg = _get_settings()
+    base = (cfg.get("unload_url") or "").rstrip("/")
+    if not cfg.get("unload_enabled") or not base:
+        return []
+    unloaded: list[str] = []
+    try:
+        with httpx.Client(timeout=15.0) as c:
+            loaded: list[str] = []
+            try:
+                r = c.get(f"{base}/v1/models")
+                if r.status_code == 200:
+                    for m in r.json().get("data", []):
+                        st = (m.get("status") or {}).get("value", "")
+                        if st in ("loaded", "loading"):
+                            loaded.append(m["id"])
+            except Exception:
+                pass
+            if not loaded:
+                try:
+                    r = c.get(f"{base}/api/status")
+                    if r.status_code == 200:
+                        for m in r.json().get("loaded_models", []):
+                            loaded.append(m["id"] if isinstance(m, dict) else str(m))
+                except Exception:
+                    pass
+            for mid in loaded:
+                ok = False
+                try:
+                    r = c.post(f"{base}/models/unload", json={"model": mid})
+                    ok = r.status_code < 300
+                except Exception:
+                    pass
+                if not ok:
+                    try:
+                        r = c.post(f"{base}/api/models/{mid}/unload")
+                        ok = r.status_code < 300
+                    except Exception:
+                        pass
+                if ok:
+                    unloaded.append(mid)
+            if unloaded:
+                time.sleep(1.5)  # give the driver a moment to release VRAM
+        if unloaded:
+            print(f"[unload] freed external models on {base}: {unloaded}", flush=True)
+    except Exception as exc:
+        print(f"[unload] failed ({exc})", flush=True)
+    return unloaded
 
 
 def _call_llm(sys_msg: str, user_msg: str, max_tokens: Optional[int] = None) -> Optional[str]:
@@ -534,6 +592,8 @@ class SettingsUpdate(BaseModel):
     img_size: int = Field(default=768, ge=256, le=2048)
     img_steps: int = Field(default=6, ge=1, le=100)
     img_cfg: float = Field(default=1.0, ge=0.0, le=30.0)
+    unload_enabled: bool = Field(default=True)
+    unload_url: str = Field(default="http://127.0.0.1:8084")
 
 
 def _public_settings(cfg: dict) -> dict:
@@ -550,6 +610,8 @@ def _public_settings(cfg: dict) -> dict:
         "img_size": cfg["img_size"],
         "img_steps": cfg["img_steps"],
         "img_cfg": cfg["img_cfg"],
+        "unload_enabled": bool(cfg.get("unload_enabled")),
+        "unload_url": cfg.get("unload_url", ""),
     }
 
 
@@ -580,9 +642,17 @@ def update_settings(req: SettingsUpdate):
     cfg["img_size"] = req.img_size
     cfg["img_steps"] = req.img_steps
     cfg["img_cfg"] = req.img_cfg
+    cfg["unload_enabled"] = req.unload_enabled
+    cfg["unload_url"] = req.unload_url.strip().rstrip("/")
 
     _save_settings(cfg)
     return _public_settings(cfg)
+
+
+@app.post("/api/settings/unload-now")
+def unload_now():
+    freed = _unload_external_models()
+    return {"ok": True, "unloaded": freed}
 
 
 @app.post("/api/settings/test-llm")
@@ -884,7 +954,10 @@ def generate(req: GenerateRequest):
             with _gpu_lock:
                 job["status"] = "running"
                 job["started_at"] = time.time()
+                job["detail"] = "Freeing GPU memory..."
                 _broadcast("job_update", {"job": dict(job)})
+                _unload_external_models()
+                job["started_at"] = time.time()
 
                 def on_stage(stage: str, pct: int, detail: str):
                     job["stage"] = stage
