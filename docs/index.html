@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>YuE2-3B on AMD Radeon PRO V620 — Audio Showcase</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-void: #0b0b0c;
+    --bg-surface: #121214;
+    --bg-raised: #1a1a1e;
+    --bg-hover: #222228;
+    --ink-primary: #f2efe9;
+    --ink-secondary: #b5b0a8;
+    --ink-muted: #76726b;
+    --accent: #f59e0b;
+    --accent-soft: rgba(245, 158, 11, 0.14);
+    --hairline: rgba(242, 239, 233, 0.08);
+    --hairline-strong: rgba(242, 239, 233, 0.16);
+    --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-serif: "Instrument Serif", Georgia, serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg-void);
+    color: var(--ink-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 36px 22px 130px;
+  }
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--hairline);
+    margin-bottom: 26px;
+  }
+  .brand-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: clamp(2rem, 4.5vw, 2.8rem);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1;
+  }
+  .subtitle {
+    margin: 10px 0 0;
+    color: var(--ink-secondary);
+    font-size: 0.92rem;
+    max-width: 620px;
+    line-height: 1.5;
+  }
+  .repo-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--ink-primary);
+    background: var(--bg-surface);
+    border: 1px solid var(--hairline-strong);
+    padding: 9px 15px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .repo-btn:hover {
+    background: var(--bg-raised);
+    border-color: var(--accent);
+  }
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+  .stat {
+    background: var(--bg-surface);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 13px 16px;
+  }
+  .stat-k {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-muted);
+  }
+  .stat-v {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-top: 4px;
+    letter-spacing: -0.02em;
+  }
+  .stat-v span { color: var(--accent); }
+
+  .tracks {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .track {
+    display: grid;
+    grid-template-columns: 72px 1fr auto;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--hairline);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .track:hover {
+    background: var(--bg-raised);
+    border-color: var(--hairline-strong);
+  }
+  .track.active {
+    border-color: rgba(245, 158, 11, 0.55);
+    background: #171511;
+  }
+  .track.active .t-title { color: var(--accent); }
+
+  .sleeve {
+    width: 72px;
+    height: 72px;
+    border-radius: 9px;
+    overflow: hidden;
+    position: relative;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-raised);
+  }
+  .sleeve img, .sleeve svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .sleeve-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(11,11,12,0.48);
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+    color: var(--ink-primary);
+  }
+  .track:hover .sleeve-overlay, .track.active .sleeve-overlay { opacity: 1; }
+
+  .t-meta { min-width: 0; }
+  .t-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .t-title {
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: -0.01em;
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .t-style {
+    font-size: 0.82rem;
+    color: var(--ink-secondary);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+  .t-sub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 7px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+  }
+  .t-sub b { color: var(--ink-primary); font-weight: 500; }
+
+  .t-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dl-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    border: 1px solid var(--hairline);
+    color: var(--ink-secondary);
+    display: grid;
+    place-items: center;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .dl-btn:hover {
+    background: var(--bg-hover);
+    color: var(--ink-primary);
+    border-color: var(--hairline-strong);
+  }
+
+  /* Fixed bottom master transport */
+  .transport {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 82px;
+    background: rgba(18, 18, 20, 0.94);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid var(--hairline-strong);
+    display: grid;
+    grid-template-columns: 260px 1fr 160px;
+    align-items: center;
+    padding: 0 24px;
+    gap: 18px;
+  }
+  .tr-track { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .tr-sleeve {
+    width: 48px; height: 48px; border-radius: 7px; overflow: hidden;
+    flex-shrink: 0; border: 1px solid var(--hairline); background: var(--bg-raised);
+  }
+  .tr-sleeve img, .tr-sleeve svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tr-title { font-size: 0.9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tr-sub { font-size: 0.74rem; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+  .tr-center { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .tr-controls { display: flex; align-items: center; gap: 16px; }
+  .tr-btn {
+    background: none; border: none; color: var(--ink-secondary); cursor: pointer;
+    padding: 4px; display: grid; place-items: center;
+  }
+  .tr-btn:hover { color: var(--ink-primary); }
+  .tr-play {
+    width: 36px; height: 36px; border-radius: 50%; border: none;
+    background: var(--ink-primary); color: var(--bg-void);
+    display: grid; place-items: center; cursor: pointer;
+    transition: background 0.14s, transform 0.1s;
+  }
+  .tr-play:hover { background: var(--accent); transform: scale(1.05); }
+
+  .tr-timeline {
+    width: 100%; max-width: 560px;
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-muted);
+  }
+  input[type="range"].slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px; background: var(--bg-hover);
+    border-radius: 999px; outline: none; cursor: pointer;
+  }
+  input[type="range"].slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg-void);
+  }
+  .tr-right { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+  #viz { width: 92px; height: 28px; display: block; }
+
+  @media (max-width: 720px) {
+    .track { grid-template-columns: 56px 1fr; }
+    .sleeve { width: 56px; height: 56px; }
+    .t-right { display: none; }
+    .transport { grid-template-columns: 1fr auto; height: 74px; padding: 0 14px; }
+    .tr-track, .tr-right { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand-row">
+        <h1>YuE2-3B &middot; Audio Showcase</h1>
+      </div>
+      <p class="subtitle">
+        Full-length 48 kHz stereo songs generated end-to-end on a single <strong>AMD Radeon PRO V620</strong> (RDNA2 <code>gfx1030</code>) with custom Wave32 HIP kernels &amp; FP16 flow matching. Click any track to play instantly.
+      </p>
+    </div>
+    <a class="repo-btn" href="https://github.com/franktheglock/yue2-rocm-v620" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55v-2.1c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.39-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.66.79.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+      <span>GitHub Repo</span>
+    </a>
+  </header>
+
+  <div class="stats-strip">
+    <div class="stat"><div class="stat-k">120s Song (Fast)</div><div class="stat-v"><span>25.4s</span> (25.1&times;)</div></div>
+    <div class="stat"><div class="stat-k">AR Decode</div><div class="stat-v"><span>219</span> tok/s</div></div>
+    <div class="stat"><div class="stat-k">Hardware</div><div class="stat-v">Radeon PRO V620</div></div>
+    <div class="stat"><div class="stat-k">Output</div><div class="stat-v">48 kHz Stereo</div></div>
+  </div>
+
+  <div class="tracks" id="trackList"></div>
+</div>
+
+<footer class="transport">
+  <div class="tr-track">
+    <div class="tr-sleeve" id="pCover"></div>
+    <div style="min-width:0">
+      <div class="tr-title" id="pTitle">Select a track</div>
+      <div class="tr-sub" id="pSub">48 kHz Stereo &middot; V620 ROCm</div>
+    </div>
+  </div>
+  <div class="tr-center">
+    <div class="tr-controls">
+      <button type="button" class="tr-btn" onclick="prev()" aria-label="Previous">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+      </button>
+      <button type="button" class="tr-play" id="pPlay" onclick="toggle()" aria-label="Play or pause">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      </button>
+      <button type="button" class="tr-btn" onclick="next()" aria-label="Next">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+      </button>
+    </div>
+    <div class="tr-timeline">
+      <span id="pCur">0:00</span>
+      <input type="range" id="pRange" class="slider" min="0" max="100" value="0" step="0.1" oninput="seek(this.value)" />
+      <span id="pDur">0:00</span>
+    </div>
+  </div>
+  <div class="tr-right">
+    <canvas id="viz" width="184" height="56"></canvas>
+  </div>
+</footer>
+
+<audio id="audio" crossorigin="anonymous"></audio>
+
+<script>
+const TRACKS = [
+  {
+    id: 'electric-in-the-rain',
+    title: 'Electric in the Rain',
+    genre: 'Upbeat Synth-Pop',
+    style: 'Energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM',
+    mode: 'cot="off" · 8-mid',
+    duration: '2:00',
+    render: '25.4s (4.72× RT)',
+    audio: 'samples/electric_in_the_rain_25s_fast.mp3',
+    cover: null,
+  },
+  {
+    id: 'velvet-coffee',
+    title: 'Velvet Coffee at 2 AM',
+    genre: 'Lo-Fi Neo-Soul Jazz',
+    style: 'Warm dusty Rhodes electric piano, mellow upright bass, brushed snare swing groove, breathy soulful female vocal, 86 BPM',
+    mode: 'cot="full" · 8-mid',
+    duration: '2:00',
+    render: '39.1s (3.07× RT)',
+    audio: 'samples/velvet_coffee_lofi_jazz.mp3',
+    cover: 'samples/velvet_coffee.jpg',
+  },
+  {
+    id: 'cedar-lantern',
+    title: 'Cedar & Lantern Light',
+    genre: 'Acoustic Indie Folk',
+    style: 'Intimate male vocal, fingerpicked steel-string acoustic guitar, warm solo cello, upright bass, soft brushed drums, 94 BPM',
+    mode: 'cot="full" · 8-mid',
+    duration: '2:00',
+    render: '39.5s (3.04× RT)',
+    audio: 'samples/cedar_lantern_indie_folk.mp3',
+    cover: 'samples/cedar_lantern.jpg',
+  },
+  {
+    id: 'overclocked-skyline',
+    title: 'Overclocked Skyline',
+    genre: 'Cyber Metal / Hard Rock',
+    style: 'Distorted seven-string guitars, soaring gritty rock vocal, thunderous double-kick drums, industrial synth bass, 145 BPM',
+    mode: 'cot="full" · 8-mid',
+    duration: '2:00',
+    render: '54.7s (2.19× RT)',
+    audio: 'samples/overclocked_skyline_cyber_metal.mp3',
+    cover: 'samples/overclocked_skyline.jpg',
+  },
+  {
+    id: 'training-agi-kpop',
+    title: 'Training AGI (K-pop Ver.)',
+    genre: 'Upbeat K-Pop Dance-Pop',
+    style: 'Bright youthful female vocal, sparkling synths, punchy dance beat, catchy hook, polished idol production, 124 BPM',
+    mode: 'cot="full" · 8-mid',
+    duration: '2:47',
+    render: '54.3s (3.07× RT)',
+    audio: 'samples/training_agi_kpop.mp3',
+    cover: 'samples/training_agi_kpop.jpg',
+  },
+  {
+    id: 'another-me',
+    title: 'Another Me',
+    genre: 'Dreamy Indie Electronic Pop',
+    style: 'Warm analog synths, soft piano, gentle glitchy percussion, airy female vocal with subtle vocoder harmonies, key change, 98 BPM',
+    mode: 'cot="full" · 8-mid',
+    duration: '3:57',
+    render: '80.6s (2.94× RT)',
+    audio: 'samples/another_me_indie_pop.mp3',
+    cover: 'samples/another_me.jpg',
+  },
+];
+
+const ICON_PLAY = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>`;
+const ICON_PAUSE = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`;
+const ICON_DL = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+
+function fallbackSVG() {
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" fill="#181512"/>
+    <circle cx="65" cy="50" r="46" fill="#c26b2a" opacity="0.28"/>
+    <circle cx="65" cy="50" r="32" fill="none" stroke="#f59e0b" stroke-opacity="0.35" stroke-width="1"/>
+    <circle cx="65" cy="50" r="14" fill="#f59e0b" opacity="0.85"/>
+    <circle cx="65" cy="50" r="3.5" fill="#181512"/>
+  </svg>`;
+}
+function coverEl(t) {
+  return t.cover ? `<img src="${t.cover}" alt="${t.title}" loading="lazy" />` : fallbackSVG();
+}
+function fmt(s) {
+  if (!s || !isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return `${m}:${r < 10 ? '0' : ''}${r}`;
+}
+
+const audio = document.getElementById('audio');
+let cur = -1;
+let actx = null, analyser = null, freq = null;
+const canvas = document.getElementById('viz');
+const ctx = canvas.getContext('2d');
+
+function initViz() {
+  if (actx) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = actx.createMediaElementSource(audio);
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 64;
+    src.connect(analyser);
+    analyser.connect(actx.destination);
+    freq = new Uint8Array(analyser.frequencyBinCount);
+  } catch {}
+}
+function drawViz() {
+  requestAnimationFrame(drawViz);
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const bars = 20, gap = 3, bw = (w - gap * (bars - 1)) / bars;
+  if (analyser && !audio.paused) {
+    analyser.getByteFrequencyData(freq);
+    for (let i = 0; i < bars; i++) {
+      const bh = Math.max(4, (freq[i + 1] / 255) * (h - 6));
+      ctx.fillStyle = i < 6 ? '#f59e0b' : 'rgba(242,239,233,0.45)';
+      ctx.fillRect(i * (bw + gap), h - bh, bw, bh);
+    }
+  } else {
+    for (let i = 0; i < bars; i++) {
+      ctx.fillStyle = 'rgba(242,239,233,0.14)';
+      ctx.fillRect(i * (bw + gap), h - 4, bw, 4);
+    }
+  }
+}
+
+function render() {
+  document.getElementById('trackList').innerHTML = TRACKS.map((t, i) => {
+    const active = i === cur;
+    const playing = active && !audio.paused;
+    return `
+      <div class="track ${active ? 'active' : ''}" id="${t.id}" onclick="playIdx(${i})">
+        <div class="sleeve">
+          ${coverEl(t)}
+          <div class="sleeve-overlay">${playing ? ICON_PAUSE : ICON_PLAY}</div>
+        </div>
+        <div class="t-meta">
+          <div class="t-head">
+            <span class="t-title">${t.title}</span>
+            <span class="badge">${t.genre}</span>
+          </div>
+          <div class="t-style">${t.style}</div>
+          <div class="t-sub">
+            <span><b>${t.duration}</b></span>
+            <span>Rendered in <b>${t.render}</b></span>
+            <span>${t.mode}</span>
+          </div>
+        </div>
+        <div class="t-right" onclick="event.stopPropagation()">
+          <a class="dl-btn" href="${t.audio}" download="${t.title}.mp3" title="Download MP3">${ICON_DL}</a>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function playIdx(i) {
+  if (i < 0 || i >= TRACKS.length) return;
+  if (cur === i) { toggle(); return; }
+  initViz();
+  if (actx && actx.state === 'suspended') actx.resume();
+  cur = i;
+  const t = TRACKS[i];
+  audio.src = t.audio;
+  audio.play().catch(() => {});
+  document.getElementById('pCover').innerHTML = coverEl(t);
+  document.getElementById('pTitle').textContent = t.title;
+  document.getElementById('pSub').textContent = `${t.genre} · ${t.render}`;
+  history.replaceState(null, '', `#${t.id}`);
+  render();
+}
+function toggle() {
+  if (cur === -1) { playIdx(0); return; }
+  initViz();
+  if (actx && actx.state === 'suspended') actx.resume();
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+}
+function prev() { playIdx((cur - 1 + TRACKS.length) % TRACKS.length); }
+function next() { playIdx((cur + 1) % TRACKS.length); }
+function seek(v) { if (audio.duration) audio.currentTime = (v / 100) * audio.duration; }
+
+audio.onplay = () => { document.getElementById('pPlay').innerHTML = ICON_PAUSE; render(); };
+audio.onpause = () => { document.getElementById('pPlay').innerHTML = ICON_PLAY; render(); };
+audio.ontimeupdate = () => {
+  document.getElementById('pCur').textContent = fmt(audio.currentTime);
+  document.getElementById('pDur').textContent = fmt(audio.duration);
+  if (audio.duration) document.getElementById('pRange').value = (audio.currentTime / audio.duration) * 100;
+};
+audio.onended = () => next();
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); toggle(); }
+});
+
+render();
+drawViz();
+if (location.hash) {
+  const idx = TRACKS.findIndex(t => `#${t.id}` === location.hash);
+  if (idx >= 0) {
+    cur = idx;
+    const t = TRACKS[idx];
+    audio.src = t.audio;
+    document.getElementById('pCover').innerHTML = coverEl(t);
+    document.getElementById('pTitle').textContent = t.title;
+    document.getElementById('pSub').textContent = `${t.genre} · ${t.render}`;
+    render();
+  }
+}
+</script>
+</body>
+</html>

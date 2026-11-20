@@ -20,13 +20,14 @@ _wheel_inspect/
 library/
 outputs/
 report/
+samples_mp4/
 *.flac
 *.wav
 *.mp3
 *.png
-!samples/
-!samples/*.mp3
-!samples/*.jpg
+!docs/samples/
+!docs/samples/*.mp3
+!docs/samples/*.jpg
 
 # Scratch / probe scripts
 bench_*.py

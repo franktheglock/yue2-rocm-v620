@@ -8,16 +8,18 @@ Generates a full **120-second 48 kHz stereo song in 25.4 seconds** (**25.1× fas
 
 ## Audio Samples (Generated on V620)
 
-All tracks below were generated end-to-end on a single AMD Radeon PRO V620 (`ar_quant="w4"`, FP16 NAR, 8-step Midpoint ODE, 48 kHz stereo FLAC transcoded to 160 kbps MP3 for repo size). Click **Listen** to open GitHub's built-in audio player:
+> **[▶ Open the Interactive Web Audio Player](https://franktheglock.github.io/yue2-rocm-v620/)** — stream all 6 full-length 48 kHz stereo tracks directly in your browser (no download required).
 
-| Cover | Track & Genre | Mode | Length | Render Time | Audio |
+All tracks below were generated end-to-end on a single AMD Radeon PRO V620 (`ar_quant="w4"`, FP16 NAR, 8-step Midpoint ODE, 48 kHz stereo):
+
+| Cover | Track & Genre | Mode | Length | Render Time | Play Online |
 |:---:|---|---|---:|---:|:---:|
-| — | **Electric in the Rain**<br>Upbeat synth-pop, energetic female vocal, analog synths, 120 BPM | `cot="off"` · 8-mid | `2:00` | **25.4s** (4.72× RT) | [Listen (MP3)](samples/electric_in_the_rain_25s_fast.mp3) |
-| <img src="samples/velvet_coffee.jpg" width="64" alt="Velvet Coffee at 2 AM" /> | **Velvet Coffee at 2 AM**<br>Late-night lo-fi neo-soul jazz, dusty Rhodes, upright bass, brushed snare, 86 BPM | `cot="full"` · 8-mid | `2:00` | **39.1s** (3.07× RT) | [Listen (MP3)](samples/velvet_coffee_lofi_jazz.mp3) |
-| <img src="samples/cedar_lantern.jpg" width="64" alt="Cedar & Lantern Light" /> | **Cedar & Lantern Light**<br>Warm acoustic indie folk ballad, male vocal, fingerpicked guitar, cello, 94 BPM | `cot="full"` · 8-mid | `2:00` | **39.5s** (3.04× RT) | [Listen (MP3)](samples/cedar_lantern_indie_folk.mp3) |
-| <img src="samples/overclocked_skyline.jpg" width="64" alt="Overclocked Skyline" /> | **Overclocked Skyline**<br>Cyber metal / hard rock, 7-string distorted guitars, double-kick drums, 145 BPM | `cot="full"` · 8-mid | `2:00` | **54.7s** (2.19× RT) | [Listen (MP3)](samples/overclocked_skyline_cyber_metal.mp3) |
-| <img src="samples/training_agi_kpop.jpg" width="64" alt="Training AGI (K-pop Ver.)" /> | **Training AGI (K-pop Ver.)**<br>Upbeat K-pop dance-pop, bright female vocal, sparkling synths, 124 BPM | `cot="full"` · 8-mid | `2:47` | **54.3s** (3.07× RT) | [Listen (MP3)](samples/training_agi_kpop.mp3) |
-| <img src="samples/another_me.jpg" width="64" alt="Another Me" /> | **Another Me**<br>Dreamy indie electronic pop, warm analog synths, piano, airy female vocal, 98 BPM | `cot="full"` · 8-mid | `3:57` | **80.6s** (2.94× RT) | [Listen (MP3)](samples/another_me_indie_pop.mp3) |
+| — | **Electric in the Rain**<br>Upbeat synth-pop, energetic female vocal, analog synths, 120 BPM | `cot="off"` · 8-mid | `2:00` | **25.4s** (4.72× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#electric-in-the-rain) |
+| <img src="docs/samples/velvet_coffee.jpg" width="64" alt="Velvet Coffee at 2 AM" /> | **Velvet Coffee at 2 AM**<br>Late-night lo-fi neo-soul jazz, dusty Rhodes, upright bass, brushed snare, 86 BPM | `cot="full"` · 8-mid | `2:00` | **39.1s** (3.07× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#velvet-coffee) |
+| <img src="docs/samples/cedar_lantern.jpg" width="64" alt="Cedar & Lantern Light" /> | **Cedar & Lantern Light**<br>Warm acoustic indie folk ballad, male vocal, fingerpicked guitar, cello, 94 BPM | `cot="full"` · 8-mid | `2:00` | **39.5s** (3.04× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#cedar-lantern) |
+| <img src="docs/samples/overclocked_skyline.jpg" width="64" alt="Overclocked Skyline" /> | **Overclocked Skyline**<br>Cyber metal / hard rock, 7-string distorted guitars, double-kick drums, 145 BPM | `cot="full"` · 8-mid | `2:00` | **54.7s** (2.19× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#overclocked-skyline) |
+| <img src="docs/samples/training_agi_kpop.jpg" width="64" alt="Training AGI (K-pop Ver.)" /> | **Training AGI (K-pop Ver.)**<br>Upbeat K-pop dance-pop, bright female vocal, sparkling synths, 124 BPM | `cot="full"` · 8-mid | `2:47` | **54.3s** (3.07× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#training-agi-kpop) |
+| <img src="docs/samples/another_me.jpg" width="64" alt="Another Me" /> | **Another Me**<br>Dreamy indie electronic pop, warm analog synths, piano, airy female vocal, 98 BPM | `cot="full"` · 8-mid | `3:57` | **80.6s** (2.94× RT) | [▶ Play](https://franktheglock.github.io/yue2-rocm-v620/#another-me) |
 
 ---
 
