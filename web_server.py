@@ -466,6 +466,13 @@ def _run_cover_pipeline(song_id: str, title: str, style: str, lyrics: str, custo
         shared_result["cover_prompt"] = prompt
         shared_result["cover_url"] = cover_url
     if cover_url:
+        # Pop the cover art into the live generating track card immediately!
+        job = _jobs.get(song_id)
+        if job and job["status"] in ("queued", "running"):
+            job["cover_url"] = cover_url
+            job["cover_prompt"] = prompt
+            job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
+            _broadcast("job_update", {"job": dict(job)})
         # Update song in library if it has already been added!
         updated_song = None
         for s in _songs:
@@ -833,6 +840,8 @@ def generate(req: GenerateRequest):
     job = {
         "job_id": job_id,
         "title": title,
+        "style": req.style.strip(),
+        "cot": req.cot,
         "source": req.source,
         "status": "queued",
         "stage": "queued",
@@ -840,6 +849,8 @@ def generate(req: GenerateRequest):
         "detail": "Waiting for GPU...",
         "started_at": time.time(),
         "elapsed_seconds": 0.0,
+        "cover_url": None,
+        "cover_prompt": req.cover_prompt,
         "song": None,
         "error": None,
     }

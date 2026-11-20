@@ -363,32 +363,59 @@
     padding: 16px 26px 28px;
   }
 
-  /* Live Generation Banner */
-  .gen-row {
-    display: none;
+  /* Generating track card (in-line inside the Library list, same layout as completed tracks) */
+  .track.generating {
     background: var(--bg-surface);
-    border: 1px solid rgba(245, 158, 11, 0.35);
-    border-radius: var(--radius-lg);
-    padding: 16px 18px;
-    margin-bottom: 16px;
+    border-color: rgba(245, 158, 11, 0.35);
+    cursor: default;
+    position: relative;
+    overflow: hidden;
   }
-  .gen-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 6px;
+  .track.generating.is-error {
+    border-color: rgba(229, 83, 75, 0.5);
   }
-  .gen-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 600;
-    font-size: 0.92rem;
+  .track-prog {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: rgba(242, 239, 233, 0.06);
+  }
+  .track-prog-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.35s ease;
+  }
+  .sleeve-shimmer {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(120deg, #18181c 25%, #26221b 50%, #18181c 75%);
+    background-size: 220% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  .sleeve-gen-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(11, 11, 12, 0.42);
+    display: grid;
+    place-items: center;
+  }
+  .cover-pop {
+    animation: coverPop 0.4s ease-out;
+  }
+  @keyframes coverPop {
+    from { opacity: 0; transform: scale(1.06); }
+    to { opacity: 1; transform: scale(1); }
   }
   .pulse-bars {
     display: inline-flex;
     align-items: flex-end;
-    gap: 2px;
+    gap: 2.5px;
     height: 14px;
   }
   .pulse-bars span {
@@ -402,25 +429,23 @@
   @keyframes eq { 0%, 100% { height: 4px; } 50% { height: 14px; } }
   .gen-clock {
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: 0.78rem;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .gen-pill {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.14);
     color: var(--accent);
   }
-  .gen-stage {
-    font-size: 0.8rem;
-    color: var(--ink-secondary);
-    margin-bottom: 10px;
-  }
-  .gen-bar {
-    height: 3px;
-    background: var(--bg-hover);
-    border-radius: 999px;
-    overflow: hidden;
-  }
-  .gen-bar-fill {
-    height: 100%;
-    width: 6%;
-    background: var(--accent);
-    transition: width 0.35s ease;
+  .gen-pill.err {
+    background: rgba(229, 83, 75, 0.16);
+    color: var(--danger);
   }
 
   /* Track Rows */
@@ -1056,18 +1081,6 @@ Living for the music that our hands have made</textarea>
     </div>
 
     <div class="feed-scroll">
-      <div class="gen-row" id="jobCard">
-        <div class="gen-head">
-          <div class="gen-title">
-            <span class="pulse-bars"><span></span><span></span><span></span></span>
-            <span id="jobTitle">Creating track...</span>
-          </div>
-          <div class="gen-clock" id="jobTimer">0.0s</div>
-        </div>
-        <div class="gen-stage" id="jobDetail">Preparing generation...</div>
-        <div class="gen-bar"><div class="gen-bar-fill" id="jobProg"></div></div>
-      </div>
-
       <div class="tracks" id="songList"></div>
     </div>
   </main>
@@ -1435,21 +1448,73 @@ function coverHTML(s, wide = false) {
 }
 
 let justAddedId = null;
+const activeJobs = new Map(); // job_id -> { ...job, _clientStartedAt }
+
+function renderGeneratingCard(job) {
+  const isErr = job.status === 'error';
+  const modeLabel = job.cot === 'full' ? 'Chords + Melody' : job.cot === 'melody' ? 'Melody' : 'Direct';
+  const srcBadge = job.source === 'mcp' ? `<span class="src-badge">MCP</span>` : '';
+  const statusPill = isErr
+    ? `<span class="gen-pill err">Failed</span>`
+    : `<span class="gen-pill">${job.status === 'queued' ? 'Queued' : 'Generating'}</span>`;
+  const sleeveInner = job.cover_url
+    ? `<img class="cover-pop" src="${esc(job.cover_url)}?j=${job.job_id}" alt="${esc(job.title || 'Generating')}" />`
+    : `<div class="sleeve-shimmer"></div>`;
+  const overlay = isErr
+    ? ''
+    : `<div class="sleeve-gen-overlay"><span class="pulse-bars"><span></span><span></span><span></span></span></div>`;
+  const elapsed = job._clientStartedAt
+    ? ((Date.now() - job._clientStartedAt) / 1000).toFixed(1)
+    : Number(job.elapsed_seconds || 0).toFixed(1);
+  const titleText = job.title && job.title !== 'Untitled Track' ? job.title : 'Naming track...';
+  const detailText = isErr ? (job.error || 'Generation failed') : (job.detail || job.stage || 'Starting...');
+  const rightSlot = isErr
+    ? `<button type="button" class="btn-icon danger" onclick="dismissJob('${job.job_id}')" title="Dismiss">&times;</button>`
+    : `<span class="gen-clock" data-job-clock="${job.job_id}">${elapsed}s</span>`;
+
+  return `
+    <div class="track generating ${isErr ? 'is-error' : ''}" data-job-id="${job.job_id}">
+      <div class="sleeve">
+        ${sleeveInner}
+        ${overlay}
+      </div>
+      <div class="t-meta">
+        <div class="t-title">${esc(titleText)} ${statusPill} ${srcBadge}</div>
+        <div class="t-style">${esc(job.style || '')}</div>
+        <div class="t-sub">
+          <span class="hi">${esc(detailText)}</span>
+          <span>${modeLabel}</span>
+        </div>
+      </div>
+      <div class="t-actions" style="opacity:1" onclick="event.stopPropagation()">
+        ${rightSlot}
+      </div>
+      <div class="track-prog"><div class="track-prog-fill" style="width:${Math.max(4, job.progress || 5)}%"></div></div>
+    </div>`;
+}
+
+function dismissJob(jobId) {
+  activeJobs.delete(jobId);
+  renderSongs();
+}
 
 function renderSongs() {
   const q = (document.getElementById('searchBox').value || '').toLowerCase().trim();
+  const liveList = Array.from(activeJobs.values()).reverse();
   const filtered = songs
     .map((s, idx) => ({ s, idx }))
     .filter(({ s }) => !q || (s.title || '').toLowerCase().includes(q) || (s.style || '').toLowerCase().includes(q));
 
-  document.getElementById('trackCount').textContent = `${filtered.length} ${filtered.length === 1 ? 'track' : 'tracks'}`;
+  const totalCount = filtered.length + (q ? 0 : liveList.length);
+  document.getElementById('trackCount').textContent = `${totalCount} ${totalCount === 1 ? 'track' : 'tracks'}`;
   const list = document.getElementById('songList');
-  if (!filtered.length) {
+  if (!filtered.length && !liveList.length) {
     list.innerHTML = `<div class="empty-state">No tracks yet. Write lyrics on the left and press Create song.</div>`;
     return;
   }
 
-  list.innerHTML = filtered.map(({ s, idx }) => {
+  const liveHTML = liveList.map(renderGeneratingCard).join('');
+  const songsHTML = filtered.map(({ s, idx }) => {
     const isPlaying = (idx === currentIdx && !audio.paused);
     const isSel = (idx === selectedIdx);
     const isNew = (s.id === justAddedId);
@@ -1477,6 +1542,8 @@ function renderSongs() {
         </div>
       </div>`;
   }).join('');
+
+  list.innerHTML = liveHTML + songsHTML;
 }
 
 function selectInspector(idx) {
@@ -1743,42 +1810,51 @@ async function startGenerate() {
 }
 
 // Live SSE stream: receives ALL UI + MCP generations & cover art updates in real time!
-let liveJobStartedAt = null;
 let liveClockTimer = null;
 
-function showLiveJob(job) {
-  const card = document.getElementById('jobCard');
-  if (!job || job.status === 'done') {
-    card.style.display = 'none';
-    document.getElementById('createBtn').disabled = false;
-    if (liveClockTimer) { clearInterval(liveClockTimer); liveClockTimer = null; }
-    return;
-  }
-  card.style.display = 'block';
-  const tag = job.source === 'mcp' ? ' [MCP]' : '';
-  document.getElementById('jobTitle').textContent = `${job.title || 'Untitled'}${tag}`;
-  document.getElementById('jobDetail').textContent = job.status === 'error' ? `Failed: ${job.error}` : (job.detail || job.stage);
-  document.getElementById('jobProg').style.width = `${job.progress || 5}%`;
-  if (job.status === 'error') {
-    document.getElementById('createBtn').disabled = false;
-    if (liveClockTimer) { clearInterval(liveClockTimer); liveClockTimer = null; }
-    return;
-  }
-  liveJobStartedAt = Date.now() - (job.elapsed_seconds || 0) * 1000;
-  if (!liveClockTimer) {
+function ensureClockTimer() {
+  const hasRunning = Array.from(activeJobs.values()).some(j => j.status === 'queued' || j.status === 'running');
+  document.getElementById('createBtn').disabled = hasRunning;
+  if (hasRunning && !liveClockTimer) {
     liveClockTimer = setInterval(() => {
-      if (liveJobStartedAt) {
-        document.getElementById('jobTimer').textContent = `${((Date.now() - liveJobStartedAt) / 1000).toFixed(1)}s`;
+      for (const job of activeJobs.values()) {
+        if (job.status !== 'queued' && job.status !== 'running') continue;
+        const el = document.querySelector(`[data-job-clock="${job.job_id}"]`);
+        if (el && job._clientStartedAt) {
+          el.textContent = `${((Date.now() - job._clientStartedAt) / 1000).toFixed(1)}s`;
+        }
       }
     }, 200);
+  } else if (!hasRunning && liveClockTimer) {
+    clearInterval(liveClockTimer);
+    liveClockTimer = null;
   }
+}
+
+function showLiveJob(job) {
+  if (!job || !job.job_id) return;
+  if (job.status === 'done') {
+    activeJobs.delete(job.job_id);
+    ensureClockTimer();
+    renderSongs();
+    return;
+  }
+  const prev = activeJobs.get(job.job_id);
+  const clientStart = prev?._clientStartedAt && prev.status === job.status
+    ? prev._clientStartedAt
+    : Date.now() - (job.elapsed_seconds || 0) * 1000;
+  activeJobs.set(job.job_id, { ...job, _clientStartedAt: clientStart });
+  ensureClockTimer();
+  renderSongs();
 }
 
 function connectEventStream() {
   const es = new EventSource('/api/events');
   es.addEventListener('hello', (e) => {
     const d = JSON.parse(e.data);
-    if (d.active_jobs && d.active_jobs.length) showLiveJob(d.active_jobs[0]);
+    if (d.active_jobs && d.active_jobs.length) {
+      d.active_jobs.forEach(showLiveJob);
+    }
   });
   es.addEventListener('job_update', (e) => {
     const { job } = JSON.parse(e.data);
@@ -1786,6 +1862,8 @@ function connectEventStream() {
   });
   es.addEventListener('song_added', (e) => {
     const { song } = JSON.parse(e.data);
+    activeJobs.delete(song.id);
+    ensureClockTimer();
     const exists = songs.findIndex(x => x.id === song.id);
     if (exists >= 0) songs[exists] = song;
     else {
