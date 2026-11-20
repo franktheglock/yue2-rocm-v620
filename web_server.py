@@ -219,7 +219,7 @@ def _craft_song_title(style: str, lyrics: str) -> str:
             "No quotes, no punctuation at the end, no explanation — output ONLY the title."
         ),
         user_msg=f"Style: {style}\nLyrics:\n{snippet}",
-        max_tokens=32,
+        max_tokens=256,
     )
     if txt:
         cleaned = txt.splitlines()[0].strip().strip("\"'`*_.,:;!?").strip()
@@ -240,7 +240,7 @@ def _craft_cover_prompt(title: str, style: str, lyrics: str) -> str:
             "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
         ),
         user_msg=f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}",
-        max_tokens=140,
+        max_tokens=512,
     )
     return txt or fallback
 
