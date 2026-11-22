@@ -43,18 +43,25 @@ def yue2_health() -> dict:
 
 
 @mcp.tool()
-def yue2_list_songs(limit: int = 20) -> list[dict]:
+def yue2_list_songs(limit: int = 20, workspace_id: Optional[str] = None, folder_id: Optional[str] = None) -> list[dict]:
     """List songs in the YuE2 Studio library (newest first) without full lyrics/ABC text."""
     with _client() as c:
         r = c.get("/api/songs")
         r.raise_for_status()
-        songs = r.json().get("songs", [])[: max(1, limit)]
+        songs = r.json().get("songs", [])
+        if workspace_id:
+            songs = [s for s in songs if (s.get("workspace_id") or "default") == workspace_id]
+        if folder_id:
+            songs = [s for s in songs if (s.get("folder_id") or None) == folder_id]
+        songs = songs[: max(1, limit)]
     return [
         {
             "id": s.get("id"),
             "title": s.get("title"),
             "style": s.get("style"),
             "cot": s.get("cot"),
+            "workspace_id": s.get("workspace_id", "default"),
+            "folder_id": s.get("folder_id"),
             "audio_seconds": s.get("audio_seconds"),
             "e2e_seconds": s.get("e2e_seconds"),
             "has_abc": bool(s.get("abc")),
@@ -63,6 +70,27 @@ def yue2_list_songs(limit: int = 20) -> list[dict]:
         }
         for s in songs
     ]
+
+
+@mcp.tool()
+def yue2_list_workspaces() -> dict:
+    """List multi-user workspaces and folders (for organizing songs per user)."""
+    with _client() as c:
+        ws = c.get("/api/workspaces")
+        ws.raise_for_status()
+        fo = c.get("/api/folders")
+        fo.raise_for_status()
+        return {"workspaces": ws.json().get("workspaces", []), "folders": fo.json().get("folders", [])}
+
+
+@mcp.tool()
+def yue2_compose(prompt: str) -> dict:
+    """Simple workflow: describe the song in one sentence — the configured LLM
+    (OpenCode Go subscription supported) writes title, style prompt, and lyrics."""
+    with _client() as c:
+        r = c.post("/api/compose", json={"prompt": prompt})
+        r.raise_for_status()
+        return r.json()
 
 
 @mcp.tool()
@@ -104,6 +132,8 @@ def yue2_generate_song(
     cover_prompt: Optional[str] = None,
     generate_cover: bool = True,
     wait: bool = True,
+    workspace_id: Optional[str] = None,
+    folder_id: Optional[str] = None,
 ) -> dict:
     """Generate a 48 kHz stereo song with YuE2-3B on the V620 (streams live into the Web UI!).
 
@@ -120,6 +150,8 @@ def yue2_generate_song(
         cover_prompt: Optional image prompt for album cover art (if omitted, auto-written by LAN LLM).
         generate_cover: Whether to generate AI album cover art in parallel (default True).
         wait: If True (default), waits until generation completes and returns the finished song metadata & paths.
+        workspace_id: Optional workspace (user) to file the song under.
+        folder_id: Optional folder within the workspace to file the song under.
     """
     payload = {
         "title": title,
@@ -134,6 +166,8 @@ def yue2_generate_song(
         "cover_prompt": cover_prompt,
         "generate_cover": generate_cover,
         "source": "mcp",
+        "workspace_id": workspace_id,
+        "folder_id": folder_id,
     }
     with _client() as c:
         r = c.post("/api/generate", json=payload)
@@ -163,6 +197,75 @@ def yue2_import_link(url: str) -> dict:
         r = c.post("/api/import-link", json={"url": url})
         r.raise_for_status()
         return r.json()
+
+
+@mcp.tool()
+def yue2_remix_song(
+    song_id: str,
+    style: str,
+    lyrics: Optional[str] = None,
+    title: Optional[str] = None,
+    cot: str = "full",
+    ode_steps: int = 8,
+    ode_method: str = "midpoint",
+    duration_seconds: Optional[int] = None,
+    seed: Optional[int] = None,
+    reuse_abc: bool = True,
+    strip_chords: bool = False,
+    cover_prompt: Optional[str] = None,
+    generate_cover: bool = True,
+    wait: bool = True,
+) -> dict:
+    """Remix a library song in a new style, reusing its ABC score (melody/chords).
+
+    Args:
+        song_id: Source song ID from yue2_list_songs (must have an ABC score unless reuse_abc=False).
+        style: New style prompt (e.g. "Cyber metal, distorted guitars, 145 BPM"). No vocal tags needed if instrumental.
+        lyrics: Optional new lyrics (section tags like [Verse], [Chorus]). Defaults to the source song's lyrics.
+        title: Optional new title (defaults to "<source> (Remix)").
+        cot: Planning mode for the remix: "full" (keep chords+melody) or "melody" (keep melody, free arrangement).
+        ode_steps: Flow-matching steps (1-64).
+        ode_method: ODE solver: "midpoint" or "euler".
+        duration_seconds: Optional max duration cap (15-360).
+        seed: Optional integer seed.
+        reuse_abc: Reuse the source ABC score (default True). Set False for a fresh cover with same lyrics.
+        strip_chords: Strip chord symbols from reused ABC (for melody-only remixes).
+        cover_prompt: Optional image prompt for album cover art.
+        generate_cover: Whether to generate AI album cover art in parallel (default True).
+        wait: If True (default), waits until generation completes and returns the finished song.
+    """
+    payload = {
+        "style": style,
+        "lyrics": lyrics,
+        "title": title,
+        "cot": cot,
+        "ode_steps": ode_steps,
+        "ode_method": ode_method,
+        "duration_seconds": duration_seconds,
+        "seed": seed,
+        "reuse_abc": reuse_abc,
+        "strip_chords": strip_chords,
+        "cover_prompt": cover_prompt,
+        "generate_cover": generate_cover,
+    }
+    with _client() as c:
+        r = c.post(f"/api/songs/{song_id}/remix", json=payload)
+        r.raise_for_status()
+        job_id = r.json()["job_id"]
+        if not wait:
+            return {"job_id": job_id, "status": "queued", "remixed_from": song_id}
+        while True:
+            st = c.get(f"/api/status/{job_id}")
+            st.raise_for_status()
+            data = st.json()
+            if data.get("status") == "done":
+                song = dict(data["song"])
+                song["full_audio_url"] = f"{API_BASE}{song['audio_url']}"
+                song["local_path"] = str(AUDIO_DIR / Path(song["audio_url"]).name)
+                return song
+            if data.get("status") == "error":
+                return {"job_id": job_id, "status": "error", "error": data.get("error")}
+            time.sleep(0.75)
 
 
 @mcp.tool()

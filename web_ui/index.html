@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0b0c" />
 <title>YuE2 — Music Studio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -32,6 +33,10 @@
   }
 
   * { box-sizing: border-box; }
+  button:focus-visible, a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   html, body {
     height: 100%;
     margin: 0;
@@ -58,11 +63,16 @@
     .studio { grid-template-columns: 340px 1fr; }
     .sheet { display: none; }
   }
-  @media (max-width: 780px) {
-    html, body { overflow: auto; }
-    .studio { grid-template-columns: 1fr; height: auto; padding-bottom: 88px; }
-    .sheet { display: none; }
-  }
+  /* Mobile-only chrome is hidden on desktop */
+  .mheader { display: none; }
+  .search-toggle { display: none; }
+  .btn-icon.t-details { display: none; }
+  .m-empty { display: none; }
+  .feed-top.feed-scope { padding-top: 0; border-top: none; }
+  #wsSelect { max-width: 170px; }
+  .scope-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; width: 100%; }
+  .modal-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
 
   /* ── LEFT: COMPOSER ──────────────────────────────────────────────────────── */
   .composer {
@@ -202,7 +212,8 @@
 
   .segmented {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     background: var(--bg-input);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-md);
@@ -306,6 +317,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     padding: 16px 26px;
     border-bottom: 1px solid var(--hairline);
     gap: 16px;
@@ -676,13 +688,6 @@
     padding: 0 22px;
     gap: 18px;
   }
-  @media (max-width: 780px) {
-    .transport {
-      position: fixed; bottom: 0; left: 0; right: 0;
-      grid-template-columns: 1fr auto; height: 74px; padding: 0 14px;
-    }
-    .tr-right { display: none; }
-  }
   .tr-track { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .tr-sleeve {
     width: 46px; height: 46px; border-radius: 7px; overflow: hidden;
@@ -799,11 +804,12 @@
   }
   .modal-body {
     padding: 18px 22px;
-    overflow-y: auto;
+    overflow: visible;
     display: flex;
     flex-direction: column;
     gap: 20px;
   }
+  .modal-body.modal-scroll { overflow-y: auto; }
   .modal-sec {
     background: var(--bg-void);
     border: 1px solid var(--hairline);
@@ -901,12 +907,250 @@
     cursor: pointer;
   }
   .btn-save:hover { filter: brightness(1.08); }
+  @media (max-width: 780px) {
+    /* ── App shell: fixed header, one scrolling pane, fixed dock ─────────── */
+    html, body { overflow: hidden; overscroll-behavior: none; }
+    body {
+      display: flex; flex-direction: column;
+      height: 100dvh; min-height: 100dvh;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .studio {
+      display: block; flex: 1 1 auto; min-height: 0;
+      height: auto; padding-bottom: 0; overflow: hidden;
+    }
+    .composer, .feed, .sheet { height: 100%; min-height: 0; }
+    .composer { border-right: none; overflow: hidden; }
+    .composer-body { flex: 1 1 auto; overflow-y: auto; padding: 12px 16px 18px; -webkit-overflow-scrolling: touch; }
+    .composer-foot {
+      position: static; flex: 0 0 auto;
+      padding: 10px 16px 12px;
+      border-top: 1px solid var(--hairline);
+      background: var(--bg-surface);
+      box-shadow: 0 -10px 20px rgba(0, 0, 0, 0.28);
+    }
+    .feed { overflow: hidden; }
+    .feed-scroll { flex: 1 1 auto; overflow-y: auto; padding: 8px 12px 20px; -webkit-overflow-scrolling: touch; }
+    .sheet { overflow-y: auto; border-left: none; padding: 16px 16px 28px; -webkit-overflow-scrolling: touch; }
+    .brand-bar { display: none; } /* wordmark + status live in the mobile header */
+
+    /* Compose / Library / Details: only the active pane is shown */
+    body[data-mtab="compose"] .composer { display: flex; }
+    body[data-mtab="compose"] .feed, body[data-mtab="compose"] .sheet { display: none; }
+    body[data-mtab="library"] .feed { display: flex; }
+    body[data-mtab="library"] .composer, body[data-mtab="library"] .sheet { display: none; }
+    body[data-mtab="details"] .sheet { display: block; }
+    body[data-mtab="details"] .composer, body[data-mtab="details"] .feed { display: none; }
+
+    /* ── Header: wordmark, hardware status, console-style tabs ───────────── */
+    .mheader {
+      display: block; flex: 0 0 auto;
+      padding-top: env(safe-area-inset-top, 0px);
+      background: linear-gradient(180deg, #101013 0%, #0b0b0c 100%);
+      border-bottom: 1px solid var(--hairline);
+      z-index: 40;
+    }
+    .mheader-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px 2px;
+    }
+    .mheader-brand { display: flex; align-items: baseline; gap: 7px; }
+    .mheader-brand .brand-word { font-size: 1.22rem; }
+    .mheader-brand .brand-sub { font-size: 0.56rem; letter-spacing: 0.17em; }
+    .mheader .hw-status { font-size: 0.6rem; padding: 3px 8px; gap: 5px; }
+    .mtabs {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 2px; padding: 0 8px;
+    }
+    .mtabs button {
+      position: relative;
+      appearance: none; border: 0; background: transparent;
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      height: 42px; padding: 0 4px;
+      color: var(--ink-muted);
+      font-family: inherit; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.01em;
+      border-radius: 8px 8px 0 0;
+      cursor: pointer;
+    }
+    .mtabs button svg { width: 15px; height: 15px; flex: none; opacity: 0.8; }
+    .mtabs button.active { color: var(--ink-primary); }
+    .mtabs button.active svg { color: var(--accent); opacity: 1; }
+    .mtabs button.active::after {
+      content: ""; position: absolute; left: 50%; bottom: 0;
+      width: 22px; height: 2px; margin-left: -11px; border-radius: 999px;
+      background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
+    }
+    .mtabs button:active { background: var(--bg-raised); }
+
+    /* ── Library header: three compact rows ──────────────────────────────── */
+    .feed-top { padding: 10px 16px 8px; gap: 8px; }
+    .feed-head { flex-wrap: nowrap; align-items: center; border-bottom: none; }
+    .feed-heading { flex: 1 1 auto; min-width: 0; gap: 8px; }
+    .feed-heading h2 { font-family: var(--font-serif); font-weight: 400; font-size: 1.3rem; letter-spacing: 0; }
+    .track-count { font-size: 0.66rem; }
+    .feed-tools { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+    #userChip {
+      max-width: 122px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-height: 38px; display: inline-flex; align-items: center;
+    }
+    .settings-btn { width: 38px; height: 38px; padding: 0; justify-content: center; flex: none; }
+    .settings-btn span { display: none; }
+    .search-input { display: none; }
+    .search-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 38px; height: 38px; padding: 0; border-radius: 10px;
+      border: 1px solid var(--hairline); background: var(--bg-surface);
+      color: var(--ink-secondary); flex: none;
+    }
+    .search-toggle:active { background: var(--bg-raised); }
+    .feed-head.search-open { flex-wrap: wrap; }
+    .feed-head.search-open .feed-heading,
+    .feed-head.search-open #userChip,
+    .feed-head.search-open .settings-btn { display: none; }
+    .feed-head.search-open .feed-tools { flex: 1 1 100%; }
+    .feed-head.search-open .search-input {
+      display: block; flex: 1 1 auto; width: auto !important;
+      font-size: 16px !important; padding: 9px 13px !important;
+    }
+    .feed-scope { padding: 0 16px 10px; border-bottom: 1px solid var(--hairline); }
+    .scope-row {
+      display: flex; align-items: center; gap: 6px;
+      flex-wrap: nowrap; width: 100%;
+      overflow-x: auto; overflow-y: hidden;
+      padding-bottom: 2px; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .scope-row::-webkit-scrollbar { display: none; }
+    .scope-row > * { flex: 0 0 auto; }
+    #wsSelect {
+      width: auto; max-width: 200px; min-height: 36px;
+      font-size: 15px; padding: 6px 22px 6px 10px;
+      text-overflow: ellipsis;
+    }
+    .scope-sep { display: none; }
+    .scope-add-label { display: none; }
+    #folderChips { display: contents !important; }
+    .scope-row .pill { min-height: 36px; display: inline-flex; align-items: center; white-space: nowrap; }
+    .feed-scope.is-scrollable .scope-row {
+      -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+      mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+    }
+
+    /* ── Track rows ──────────────────────────────────────────────────────── */
+    .track { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; padding: 9px 6px; }
+    .sleeve { width: 48px; height: 48px; border-radius: 7px; }
+    .t-title { font-size: 0.9rem; }
+    .t-title .src-badge { display: none; }
+    .t-style { font-size: 0.74rem; }
+    .t-sub { font-size: 0.66rem; gap: 8px; margin-top: 4px; }
+    .t-sub > span { white-space: nowrap; }
+    .t-sub > span:nth-child(2) { display: none; }
+    .t-actions { opacity: 1; gap: 2px; }
+    .t-actions .btn-icon { width: 38px; height: 38px; padding: 0; }
+    .btn-icon.t-details { display: grid; }
+    .empty-state { padding: 44px 24px; font-size: 0.85rem; line-height: 1.6; }
+    .empty-state .btn-secondary { width: auto; display: inline-flex; margin-top: 16px; padding: 10px 18px; }
+
+    /* ── Touch sizing ────────────────────────────────────────────────────── */
+    .btn-create, .btn-save, .btn-secondary, .btn-ghost { min-height: 46px; }
+    .pill { min-height: 36px; display: inline-flex; align-items: center; white-space: nowrap; }
+    .text-action { min-height: 32px; display: inline-flex; align-items: center; }
+    .seg { min-height: 38px; font-size: 0.71rem; }
+    .two-col { grid-template-columns: 1fr 1fr; }
+    .field { margin-bottom: 15px; }
+    input[type="text"], input[type="number"], input[type="password"], textarea, select { font-size: 16px; }
+    .modal-field input[type="password"] { font-size: 16px; }
+
+    /* ── Details sheet ───────────────────────────────────────────────────── */
+    .sheet-sleeve { aspect-ratio: 16 / 10; margin-bottom: 14px; }
+    .sheet-title { font-size: 1.55rem; }
+    .sheet-style { font-size: 0.82rem; }
+    .sheet-stats { gap: 8px 14px; font-size: 0.7rem; }
+    .sheet-copy { font-size: 0.85rem; line-height: 1.7; }
+    .organize-row { flex-wrap: wrap; }
+    .organize-row select { flex: 1 1 42%; min-width: 0; }
+    .organize-row .pill { flex: 1 1 100%; min-height: 38px; }
+
+    /* ── Modals become bottom sheets ─────────────────────────────────────── */
+    .modal-backdrop { padding: 0; align-items: flex-end; }
+    .modal-card {
+      max-width: 100%; max-height: 92dvh;
+      border-radius: 18px 18px 0 0;
+      border-left: none; border-right: none; border-bottom: none;
+    }
+    .modal-card::before {
+      content: ""; flex: none; width: 36px; height: 4px; margin: 8px auto 0;
+      border-radius: 999px; background: var(--hairline-strong);
+    }
+    .modal-head { padding: 12px 18px; }
+    .modal-head h3 { font-size: 1.3rem; }
+    .modal-body { padding: 16px 18px; overflow: visible; }
+    .modal-body + .modal-body { padding-top: 0; }
+    .modal-foot { flex-wrap: wrap; gap: 10px; padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); }
+    .modal-status { flex: 1 1 100%; min-height: 0; font-size: 0.74rem; }
+    .modal-actions { flex: 1 1 100%; }
+    .modal-actions .btn-ghost, .modal-actions .btn-save { flex: 1; }
+    .modal-grid, .modal-grid-3 { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 780px) {
+    .transport {
+      position: relative; flex: 0 0 auto;
+      display: grid; grid-template-columns: 1fr; gap: 2px;
+      height: auto;
+      padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+      background: #0d0d0f;
+    }
+    .tr-track { grid-row: 1; gap: 10px; }
+    .tr-sleeve { width: 40px; height: 40px; border-radius: 6px; }
+    .tr-title { font-size: 0.85rem; }
+    .tr-sub { font-size: 0.68rem; margin-top: 1px; }
+    .tr-center {
+      grid-row: 2; flex-direction: row; align-items: center;
+      justify-content: flex-start; gap: 10px; width: 100%;
+    }
+    .tr-controls { flex: 0 0 auto; gap: 2px; }
+    .tr-btn { width: 38px; height: 38px; padding: 0; }
+    .tr-play { width: 40px; height: 40px; }
+    .tr-timeline { flex: 1 1 auto; min-width: 0; max-width: none; gap: 7px; font-size: 0.68rem; }
+    .tr-timeline span { min-width: 30px; text-align: center; }
+    #pRange { min-width: 0; }
+    .tr-right { display: none; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .pulse-bars span { animation: none; height: 10px; }
   }
 </style>
 </head>
-<body>
+<body data-mtab="library">
+
+<header class="mheader">
+  <div class="mheader-top">
+    <div class="mheader-brand">
+      <span class="brand-word">YuE2</span>
+      <span class="brand-sub">Studio</span>
+    </div>
+    <div class="hw-status" id="hwStatusMobile">
+      <span class="hw-dot"></span>
+      <span>V620</span>
+    </div>
+  </div>
+  <nav class="mtabs" id="mtabs" aria-label="Sections">
+    <button type="button" data-mtab-btn="compose" onclick="setMobileTab('compose')" aria-label="Compose">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      <span>Compose</span>
+    </button>
+    <button type="button" data-mtab-btn="library" onclick="setMobileTab('library')" aria-label="Library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      <span>Library</span>
+    </button>
+    <button type="button" data-mtab-btn="details" onclick="setMobileTab('details')" aria-label="Details">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span>Details</span>
+    </button>
+  </nav>
+</header>
 
 <div class="studio">
   <!-- LEFT: COMPOSER -->
@@ -923,6 +1167,27 @@
     </div>
 
     <div class="composer-body">
+      <div class="segmented" role="group" aria-label="Composer mode" style="margin-bottom:12px">
+        <button type="button" class="seg active" id="modeManualBtn" data-val="manual" onclick="setComposerMode('manual')">Manual</button>
+        <button type="button" class="seg" id="modeDescribeBtn" data-val="describe" onclick="setComposerMode('describe')">✨ Describe</button>
+      </div>
+
+      <div id="describePane" style="display:none">
+        <div class="field">
+          <div class="field-row"><label class="field-label" for="composePrompt">Describe your song — AI fills the form</label></div>
+          <textarea id="composePrompt" rows="5" placeholder="e.g. a sad late-night lo-fi song about rain on the window, breathy female vocal"></textarea>
+        </div>
+        <div class="field">
+          <div style="display:flex;gap:6px">
+            <button type="button" class="btn-secondary" id="composeBtn" onclick="runCompose(false)" style="flex:1">Write it for me</button>
+            <button type="button" class="btn-create" id="composeCreateBtn" onclick="runCompose(true)" style="flex:1">Write &amp; Create</button>
+          </div>
+        </div>
+        <div id="composeOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary);margin-top:6px;white-space:pre-wrap"></div>
+        <div id="composeStatusInline" style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px">Uses your LLM provider (OpenCode Go recommended). Result fills the Manual form.</div>
+      </div>
+
+      <div id="manualPane">
       <div class="field">
         <div class="field-row">
           <label class="field-label" for="importUrl">Clone from Suno or ACE link</label>
@@ -1054,6 +1319,7 @@ Living for the music that our hands have made</textarea>
         <div class="field-row"><label class="field-label" for="abcInput">Custom ABC score</label></div>
         <textarea id="abcInput" rows="4" style="font-family:var(--font-mono);font-size:0.74rem" placeholder="Paste ABC notation to guide melody and harmony..."></textarea>
       </details>
+      </div><!-- /manualPane -->
     </div>
 
     <div class="composer-foot">
@@ -1066,17 +1332,31 @@ Living for the music that our hands have made</textarea>
 
   <!-- CENTER: TRACK LIBRARY -->
   <main class="feed">
-    <div class="feed-top">
+    <div class="feed-top feed-head">
       <div class="feed-heading">
         <h2>Library</h2>
         <span class="track-count" id="trackCount">0 tracks</span>
       </div>
       <div class="feed-tools">
+        <button type="button" class="pill" id="userChip" onclick="openUserPicker()" title="Switch user" style="white-space:nowrap">👤 …</button>
         <input id="searchBox" class="search-input" type="text" placeholder="Filter tracks..." oninput="renderSongs()" />
+        <button type="button" class="search-toggle" id="searchToggle" onclick="toggleSearch()" aria-label="Search tracks" aria-expanded="false">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
         <button type="button" class="settings-btn" onclick="openSettings()" title="Provider &amp; Model Settings">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>Settings</span>
         </button>
+      </div>
+    </div>
+
+    <div class="feed-top feed-scope">
+      <div class="scope-row">
+        <select id="wsSelect" onchange="switchWorkspace(this.value)" title="Workspace"></select>
+        <button type="button" class="pill" onclick="createWorkspace()" title="New workspace" aria-label="New workspace">+<span class="scope-add-label"> Workspace</span></button>
+        <span class="scope-sep" style="color:var(--hairline-strong)">|</span>
+        <div id="folderChips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+        <button type="button" class="pill" onclick="createFolder()" title="New folder in this workspace">+ Folder</button>
       </div>
     </div>
 
@@ -1087,7 +1367,10 @@ Living for the music that our hands have made</textarea>
 
   <!-- RIGHT: TRACK SHEET -->
   <aside class="sheet" id="inspector">
-    <div class="empty-state">Select a track to read its lyrics, score, and render details.</div>
+    <div class="empty-state">
+      <div>No track selected. Pick one from the library to see its lyrics, score, and render details.</div>
+      <button type="button" class="btn-secondary m-empty" onclick="setMobileTab('library')">Browse library</button>
+    </div>
   </aside>
 </div>
 
@@ -1126,7 +1409,7 @@ Living for the music that our hands have made</textarea>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
       <input type="range" class="slider" min="0" max="1" step="0.02" value="0.9" oninput="audio.volume=this.value" aria-label="Volume" />
     </div>
-    <a class="btn-icon" id="pDownload" href="#" download title="Download FLAC">
+    <a class="btn-icon" id="pDownload" href="#" download title="Download MP3">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     </a>
   </div>
@@ -1139,6 +1422,7 @@ Living for the music that our hands have made</textarea>
       <h3 id="settingsTitle">Studio Settings</h3>
       <button type="button" class="text-action" onclick="closeSettings()" style="font-size:1.2rem;line-height:1" aria-label="Close">&times;</button>
     </div>
+    <div class="modal-scroll">
     <div class="modal-body">
       <div class="modal-sec">
         <div class="modal-sec-head">
@@ -1150,6 +1434,7 @@ Living for the music that our hands have made</textarea>
             <div class="field-row"><label class="field-label" for="setLlmProv">Provider</label></div>
             <select id="setLlmProv" onchange="onLlmProvChange()">
               <option value="openai">OpenAI-compatible (llama.cpp / vLLM / OpenAI)</option>
+              <option value="opencode-go">OpenCode Go (subscription, no per-token fee)</option>
               <option value="openrouter">OpenRouter</option>
               <option value="anthropic">Anthropic (Claude)</option>
               <option value="ollama">Ollama</option>
@@ -1161,13 +1446,14 @@ Living for the music that our hands have made</textarea>
           </div>
         </div>
         <div class="modal-field">
-          <div class="field-row"><label class="field-label" for="setLlmUrl">Base URL</label></div>
-          <input id="setLlmUrl" type="text" placeholder="http://192.168.1.142:18081" />
+          <div class="field-row"><label class="field-label" for="setLlmUrl">Base URL — auto-fills on provider switch</label></div>
+          <input id="setLlmUrl" type="text" placeholder="http://192.168.1.142:18081" oninput="scheduleLlmModelsRefresh()" />
         </div>
         <div class="modal-grid modal-field">
           <div>
-            <div class="field-row"><label class="field-label" for="setLlmModel">Model</label></div>
-            <input id="setLlmModel" type="text" placeholder="maple-cpu" />
+            <div class="field-row"><label class="field-label" for="setLlmModel">Model — pick from list</label><button type="button" class="pill" id="llmModelsBtn" onclick="refreshLlmModels()" title="Load models from the provider /models endpoint">↻ Load</button></div>
+            <input id="setLlmModel" type="text" list="llmModelList" placeholder="maple-cpu" autocomplete="off" />
+            <datalist id="llmModelList"></datalist>
           </div>
           <div>
             <div class="field-row">
@@ -1251,6 +1537,7 @@ Living for the music that our hands have made</textarea>
         <div id="unloadOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary)"></div>
       </div>
     </div>
+    </div><!-- /modal-scroll -->
     <div class="modal-foot">
       <span class="modal-status" id="settingsStatus">Saved locally to library/settings.json</span>
       <div class="modal-actions">
@@ -1261,11 +1548,40 @@ Living for the music that our hands have made</textarea>
   </div>
 </div>
 
+<!-- USER PICKER (first run: choose or create a user; users own workspaces) -->
+<div class="modal-backdrop" id="userModal" onclick="if(event.target===this) closeUserPicker()">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="userTitle">
+    <div class="modal-head">
+      <h3 id="userTitle">Who's making music?</h3>
+      <button type="button" class="text-action" onclick="closeUserPicker()" style="font-size:1.2rem;line-height:1" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body modal-scroll">
+      <div class="modal-field"><div class="field-row"><label class="field-label">Pick a user</label></div><div id="userList" style="display:flex;flex-direction:column;gap:6px"></div></div>
+      <div class="modal-field">
+        <div class="field-row"><label class="field-label" for="newUserName">Or create a new one</label></div>
+        <div style="display:flex;gap:6px">
+          <input id="newUserName" type="text" placeholder="e.g. Alex" maxlength="40" onkeydown="if(event.key==='Enter'){event.preventDefault();createUserFromPicker();}" />
+          <button type="button" class="btn-save" onclick="createUserFromPicker()">Create</button>
+        </div>
+      </div>
+      <div id="userPickerStatus" style="font-size:0.74rem;color:var(--ink-muted)">Users keep separate workspaces &amp; folders on this machine.</div>
+    </div>
+  </div>
+</div>
+
 <audio id="audioEl" crossorigin="anonymous"></audio>
 
 <script>
 const audio = document.getElementById('audioEl');
 let songs = [];
+let users = [];
+let workspaces = [];
+let folders = [];
+let activeUser = localStorage.getItem('yue2_user') || '';
+let activeWorkspace = localStorage.getItem('yue2_ws') || 'default';
+let activeFolder = 'all';
+let composeSession = 'compose-' + Math.random().toString(36).slice(2, 10);
+let composerMode = 'manual';
 let currentIdx = -1;
 let selectedIdx = -1;
 let cotMode = 'full';
@@ -1349,6 +1665,9 @@ const ICON_PLAY = `<svg width="16" height="16" viewBox="0 0 24 24" fill="current
 const ICON_PAUSE = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`;
 const ICON_DL = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+const ICON_CHEVRON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+const ICON_SEARCH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+const ICON_CLOSE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 
 function fmtTime(sec) {
   if (!sec || !isFinite(sec)) return '0:00';
@@ -1454,15 +1773,255 @@ Living for the music that our hands have made`;
 async function fetchHealth() {
   try {
     const r = await (await fetch('/api/health')).json();
-    document.getElementById('hwStatus').innerHTML = `<span class="hw-dot"></span><span>V620 &middot; ${r.vram_gb}G</span>`;
+    const html = `<span class="hw-dot"></span><span>V620 &middot; ${r.vram_gb}G</span>`;
+    document.getElementById('hwStatus').innerHTML = html;
+    const mobile = document.getElementById('hwStatusMobile');
+    if (mobile) mobile.innerHTML = html;
   } catch {}
 }
 
 async function fetchSongs() {
+  await Promise.all([fetchUsers(), fetchWorkspaces(), fetchFolders()]);
+  // First run: no saved user -> force explicit pick (users own workspaces).
+  if (!localStorage.getItem('yue2_user')) openUserPicker();
   const r = await (await fetch('/api/songs')).json();
-  songs = r.songs || [];
+  songs = (r.songs || []).map(s => ({
+    user_id: 'default',
+    workspace_id: 'default',
+    folder_id: null,
+    ...s,
+  }));
+  if (!users.find(u => u.id === activeUser)) activeUser = users[0]?.id || 'default';
+  const mine = userWorkspaces();
+  if (!mine.find(w => w.id === activeWorkspace)) activeWorkspace = mine[0]?.id || 'default';
+  renderUserBar();
   renderSongs();
-  if (selectedIdx === -1 && songs.length > 0) selectInspector(0);
+  if (selectedIdx === -1) selectFirstVisible();
+}
+
+async function fetchUsers() {
+  try {
+    const r = await (await fetch('/api/users')).json();
+    users = r.users || [{ id: 'default', name: 'Guest' }];
+  } catch { users = [{ id: 'default', name: 'Guest' }]; }
+  if (!activeUser || !users.find(u => u.id === activeUser)) {
+    activeUser = users[0]?.id || 'default';
+  }
+}
+
+function userWorkspaces() {
+  return workspaces.filter(w => (w.user_id || 'default') === activeUser);
+}
+
+function openUserPicker() { renderUserPicker(); document.getElementById('userModal').classList.add('open'); }
+function closeUserPicker() { document.getElementById('userModal').classList.remove('open'); }
+
+function renderUserPicker() {
+  const list = document.getElementById('userList');
+  if (!list) return;
+  list.innerHTML = users.map(u => {
+    const nws = workspaces.filter(w => (w.user_id || 'default') === u.id).length;
+    const nsongs = songs.filter(s => (s.user_id || 'default') === u.id).length;
+    const active = u.id === activeUser ? 'border-color:var(--accent);color:var(--ink-primary)' : '';
+    return `<div style="display:flex;gap:6px;align-items:center">
+      <button type="button" class="pill" onclick="pickUser('${esc(u.id)}')" style="flex:1;text-align:left;${active}">👤 ${esc(u.name)} · ${nws} spaces · ${nsongs} songs</button>
+      ${u.id !== 'default' ? `<button type="button" class="pill" onclick="deleteUser('${esc(u.id)}')" title="Delete user">×</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function pickUser(uid) {
+  activeUser = uid;
+  localStorage.setItem('yue2_user', uid);
+  const mine = workspaces.filter(w => (w.user_id || 'default') === uid);
+  activeWorkspace = mine[0]?.id || 'default';
+  localStorage.setItem('yue2_ws', activeWorkspace);
+  activeFolder = 'all';
+  selectedIdx = -1;
+  closeUserPicker();
+  renderUserBar();
+  renderSongs();
+  selectFirstVisible();
+}
+
+async function createUserFromPicker() {
+  const inp = document.getElementById('newUserName');
+  const name = (inp.value || '').trim();
+  if (!name) return;
+  const st = document.getElementById('userPickerStatus');
+  st.textContent = 'Creating...';
+  try {
+    const r = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (!r.ok) throw new Error(await r.text());
+    const { user, workspace } = await r.json();
+    users.push(user);
+    if (workspace) workspaces.push(workspace);
+    inp.value = '';
+    await pickUser(user.id);
+    renderUserPicker();
+  } catch (e) { st.textContent = `Error: ${e.message}`; }
+}
+
+async function deleteUser(uid) {
+  if (!confirm('Delete this user? Their workspaces move back to Guest. Songs are kept.')) return;
+  await fetch(`/api/users/${uid}`, { method: 'DELETE' });
+  await Promise.all([fetchUsers(), fetchWorkspaces(), fetchFolders()]);
+  if (activeUser === uid) activeUser = 'default';
+  localStorage.setItem('yue2_user', activeUser);
+  renderUserPicker();
+  renderUserBar();
+}
+
+function renderUserBar() {
+  const me = users.find(u => u.id === activeUser) || { name: '…' };
+  const chip = document.getElementById('userChip');
+  if (chip) chip.textContent = `👤 ${me.name} ▾`;
+  renderWorkspaceBar();
+  if (!document.getElementById('userModal').classList.contains('open')) renderUserPicker();
+}
+
+async function fetchWorkspaces() {
+  try {
+    const r = await (await fetch('/api/workspaces')).json();
+    workspaces = r.workspaces || [];
+  } catch { workspaces = []; }
+  if (!workspaces.find(w => w.id === 'default')) {
+    workspaces.unshift({ id: 'default', user_id: 'default', name: 'My Workspace' });
+  }
+}
+
+async function fetchFolders() {
+  try {
+    const r = await (await fetch('/api/folders')).json();
+    folders = r.folders || [];
+  } catch { folders = []; }
+}
+
+function wsFolders() {
+  return folders.filter(f => (f.workspace_id || 'default') === activeWorkspace);
+}
+
+function setComposerMode(mode) {
+  composerMode = mode;
+  document.getElementById('modeManualBtn').classList.toggle('active', mode === 'manual');
+  document.getElementById('modeDescribeBtn').classList.toggle('active', mode === 'describe');
+  document.getElementById('manualPane').style.display = mode === 'manual' ? '' : 'none';
+  document.getElementById('describePane').style.display = mode === 'describe' ? '' : 'none';
+  if (mode === 'describe') setTimeout(() => document.getElementById('composePrompt').focus(), 50);
+}
+// Back-compat for old buttons/keys.
+function openCompose() { setComposerMode('describe'); }
+function closeCompose() { setComposerMode('manual'); }
+
+function renderWorkspaceBar() {
+  const mine = userWorkspaces();
+  const sel = document.getElementById('wsSelect');
+  const wsIcon = isMobileView() ? '' : '🗂 ';
+  if (sel) sel.innerHTML = mine.map(w => `<option value="${esc(w.id)}" ${w.id === activeWorkspace ? 'selected' : ''}>${wsIcon}${esc(w.name)}</option>`).join('');
+  const chips = document.getElementById('folderChips');
+  if (!chips) return;
+  const counts = {};
+  songs.forEach(s => {
+    if ((s.user_id || 'default') !== activeUser) return;
+    const wid = s.workspace_id || 'default';
+    if (wid !== activeWorkspace) return;
+    const fid = s.folder_id || '__none__';
+    counts[fid] = (counts[fid] || 0) + 1;
+  });
+  const allN = Object.values(counts).reduce((a, b) => a + b, 0);
+  let html = `<button type="button" class="pill" onclick="setFolder('all')" style="${activeFolder === 'all' ? 'border-color:var(--accent);color:var(--ink-primary)' : ''}">All (${allN})</button>`;
+  html += wsFolders().map(f => `<button type="button" class="pill" onclick="setFolder('${esc(f.id)}')" ondblclick="renameFolder('${esc(f.id)}')" title="Double-click to rename" style="${activeFolder === f.id ? 'border-color:var(--accent);color:var(--ink-primary)' : ''}">📁 ${esc(f.name)} (${counts[f.id] || 0})</button>`).join('');
+  html += `<button type="button" class="pill" onclick="setFolder('__none__')" style="${activeFolder === '__none__' ? 'border-color:var(--accent);color:var(--ink-primary)' : ''}">Unfiled (${counts['__none__'] || 0})</button>`;
+  chips.innerHTML = html;
+  updateScopeFade();
+}
+
+function updateScopeFade() {
+  const row = document.querySelector('.scope-row');
+  const wrap = row && row.closest('.feed-scope');
+  if (!row || !wrap) return;
+  wrap.classList.toggle('is-scrollable', row.scrollWidth > row.clientWidth + 1);
+}
+
+function switchWorkspace(wid) {
+  activeWorkspace = wid;
+  activeFolder = 'all';
+  selectedIdx = -1;
+  localStorage.setItem('yue2_ws', wid);
+  renderWorkspaceBar();
+  renderSongs();
+  selectFirstVisible();
+}
+
+function setFolder(fid) {
+  activeFolder = fid;
+  renderWorkspaceBar();
+  renderSongs();
+}
+
+async function createWorkspace() {
+  const name = prompt('New workspace name:');
+  if (!name || !name.trim()) return;
+  const r = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), user_id: activeUser }) });
+  if (!r.ok) return alert('Could not create workspace');
+  const { workspace } = await r.json();
+  workspaces.push(workspace);
+  switchWorkspace(workspace.id);
+}
+
+async function createFolder() {
+  const name = prompt('New folder name:');
+  if (!name || !name.trim()) return;
+  const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), workspace_id: activeWorkspace }) });
+  if (!r.ok) return alert('Could not create folder');
+  const { folder } = await r.json();
+  folders.push(folder);
+  renderWorkspaceBar();
+  renderSongs();
+}
+
+async function renameFolder(fid) {
+  const f = folders.find(x => x.id === fid);
+  const name = prompt('Rename folder:', f ? f.name : '');
+  if (!name || !name.trim()) return;
+  await fetch(`/api/folders/${fid}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) });
+  await fetchFolders();
+  renderWorkspaceBar();
+}
+
+async function moveSong(songId, folderId) {
+  await fetch(`/api/songs/${songId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: activeUser, workspace_id: activeWorkspace, folder_id: folderId === 'none' ? null : folderId }) });
+  const s = songs.find(x => x.id === songId);
+  if (s) { s.user_id = activeUser; s.workspace_id = activeWorkspace; s.folder_id = folderId === 'none' ? null : folderId; }
+  renderWorkspaceBar();
+  renderSongs();
+}
+
+async function runCompose(createAfter) {
+  const prompt = (document.getElementById('composePrompt').value || '').trim();
+  const out = document.getElementById('composeOut');
+  const st = document.getElementById('composeStatusInline');
+  if (!prompt) { st.textContent = 'Describe your song first.'; return; }
+  const btn = document.getElementById('composeBtn');
+  const btn2 = document.getElementById('composeCreateBtn');
+  btn.disabled = true; btn2.disabled = true;
+  st.textContent = 'Asking your LLM (OpenCode Go sends x-opencode-session)...';
+  out.textContent = '';
+  try {
+    const r = await fetch('/api/compose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, session_id: composeSession }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Compose failed');
+    if (data.session_id) composeSession = data.session_id;
+    document.getElementById('title').value = data.title || '';
+    document.getElementById('style').value = data.style || '';
+    document.getElementById('lyrics').value = data.lyrics || '';
+    if (data.cover_prompt) document.getElementById('coverPrompt').value = data.cover_prompt;
+    out.textContent = `"${data.title}" written — review it in Manual mode, then Create song.`;
+    st.textContent = 'Done! Switch to Manual to tweak, or press Write & Create.';
+    if (createAfter) { setComposerMode('manual'); startGenerate(); }
+  } catch (e) {
+    st.textContent = `Error: ${e.message}`;
+  } finally { btn.disabled = false; btn2.disabled = false; }
 }
 
 function coverHTML(s, wide = false) {
@@ -1525,16 +2084,26 @@ function dismissJob(jobId) {
 
 function renderSongs() {
   const q = (document.getElementById('searchBox').value || '').toLowerCase().trim();
-  const liveList = Array.from(activeJobs.values()).reverse();
+  const liveList = Array.from(activeJobs.values()).filter(j => (!j.user_id || j.user_id === activeUser) && (!j.workspace_id || j.workspace_id === activeWorkspace)).reverse();
   const filtered = songs
     .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => (s.user_id || 'default') === activeUser)
+    .filter(({ s }) => (s.workspace_id || 'default') === activeWorkspace)
+    .filter(({ s }) => activeFolder === 'all' ? true : activeFolder === '__none__' ? !s.folder_id : s.folder_id === activeFolder)
     .filter(({ s }) => !q || (s.title || '').toLowerCase().includes(q) || (s.style || '').toLowerCase().includes(q));
 
   const totalCount = filtered.length + (q ? 0 : liveList.length);
   document.getElementById('trackCount').textContent = `${totalCount} ${totalCount === 1 ? 'track' : 'tracks'}`;
   const list = document.getElementById('songList');
   if (!filtered.length && !liveList.length) {
-    list.innerHTML = `<div class="empty-state">No tracks yet. Write lyrics on the left and press Create song.</div>`;
+    const raw = (document.getElementById('searchBox').value || '').trim();
+    const msg = raw
+      ? `No tracks match “${esc(raw)}”.`
+      : activeFolder !== 'all' ? 'Nothing filed here yet.' : 'No tracks yet.';
+    const action = raw
+      ? `<button type="button" class="btn-secondary" onclick="clearSearch()">Clear search</button>`
+      : `<button type="button" class="btn-secondary" onclick="goCompose()">Create a song</button>`;
+    list.innerHTML = `<div class="empty-state"><div>${msg}</div>${action}</div>`;
     return;
   }
 
@@ -1562,13 +2131,30 @@ function renderSongs() {
           </div>
         </div>
         <div class="t-actions" onclick="event.stopPropagation()">
-          <a class="btn-icon" href="/api/songs/${s.id}/download" download="${esc(s.title || 'song')}.flac" title="Download lossless FLAC">${ICON_DL}</a>
-          <button type="button" class="btn-icon danger" onclick="delSong('${s.id}')" title="Remove track">${ICON_TRASH}</button>
+          <a class="btn-icon" href="/api/songs/${s.id}/download?format=mp3" download="${esc(s.title || 'song')}.mp3" title="Download MP3 (FLAC: ?format=flac)" aria-label="Download ${esc(s.title || 'song')}">${ICON_DL}</a>
+          <button type="button" class="btn-icon danger" onclick="delSong('${s.id}')" title="Remove track" aria-label="Remove track">${ICON_TRASH}</button>
+          <button type="button" class="btn-icon t-details" onclick="openInspector(${idx})" title="Track details" aria-label="Track details">${ICON_CHEVRON}</button>
         </div>
       </div>`;
   }).join('');
 
   list.innerHTML = liveHTML + songsHTML;
+}
+
+const EMPTY_SHEET = `<div class="empty-state"><div>No track selected. Pick one from the library to see its lyrics, score, and render details.</div><button type="button" class="btn-secondary m-empty" onclick="setMobileTab('library')">Browse library</button></div>`;
+
+function firstVisibleSongIdx() {
+  return songs.findIndex(s =>
+    (s.user_id || 'default') === activeUser &&
+    (s.workspace_id || 'default') === activeWorkspace &&
+    (activeFolder === 'all' ? true : activeFolder === '__none__' ? !s.folder_id : s.folder_id === activeFolder)
+  );
+}
+
+function selectFirstVisible() {
+  const i = firstVisibleSongIdx();
+  if (i >= 0) selectInspector(i);
+  else { selectedIdx = -1; document.getElementById('inspector').innerHTML = EMPTY_SHEET; }
 }
 
 function selectInspector(idx) {
@@ -1589,6 +2175,17 @@ function selectInspector(idx) {
     </div>
     <button type="button" class="btn-secondary" style="margin-top:0;margin-bottom:16px" onclick="genCoverFor('${s.id}')">${s.cover_url ? 'Regenerate cover art' : 'Generate cover art'}</button>
     <div class="sheet-section">
+      <div class="sheet-section-head"><span class="sheet-section-title">Organize</span></div>
+      <div style="display:flex;gap:6px" class="organize-row">
+        <select id="moveWs" style="flex:1">${userWorkspaces().map(w => `<option value="${esc(w.id)}" ${(s.workspace_id || 'default') === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
+        <select id="moveFolder" style="flex:1">
+          <option value="none">Unfiled</option>
+          ${wsFolders().map(f => `<option value="${esc(f.id)}" ${s.folder_id === f.id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
+        </select>
+        <button type="button" class="pill" onclick="moveSongFromInspector('${s.id}')">Move</button>
+      </div>
+    </div>
+    <div class="sheet-section">
       <div class="sheet-section-head">
         <span class="sheet-section-title">Lyrics</span>
         <button type="button" class="text-action" onclick="copyText(${idx}, 'lyrics')">Copy</button>
@@ -1602,9 +2199,28 @@ function selectInspector(idx) {
         <button type="button" class="text-action" onclick="copyText(${idx}, 'abc')">Copy</button>
       </div>
       <div class="sheet-score">${esc(s.abc)}</div>
-      <button type="button" class="btn-secondary" onclick="remixWithScore(${idx})">Edit score &amp; remix</button>
     </div>` : ''}
+    <div class="sheet-section">
+      <div class="sheet-section-head">
+        <span class="sheet-section-title">Remix in new style</span>
+      </div>
+      <input id="remixStyle-${s.id}" type="text" placeholder="e.g. Cyber metal, distorted guitars, 145 BPM..." onkeydown="if(event.key==='Enter'){event.preventDefault();remixSong('${s.id}')}" />
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button type="button" class="btn-secondary" onclick="remixSong('${s.id}')">Remix ${s.abc ? '(keep melody)' : '(same lyrics)'}</button>
+        <button type="button" class="text-action" onclick="remixDraft(${idx})">Load as draft</button>
+        ${s.abc ? `<button type="button" class="text-action" onclick="remixWithScore(${idx})">Edit score</button>` : ''}
+      </div>
+      <div id="remixMsg-${s.id}" style="font-size:0.72rem;color:var(--ink-muted);margin-top:6px"></div>
+    </div>
   `;
+}
+
+async function moveSongFromInspector(songId) {
+  const ws = document.getElementById('moveWs').value;
+  const fo = document.getElementById('moveFolder').value;
+  await fetch(`/api/songs/${songId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: activeUser, workspace_id: ws, folder_id: fo === 'none' ? null : fo }) });
+  if (ws !== activeWorkspace) switchWorkspace(ws);
+  await fetchSongs();
 }
 
 async function genCoverFor(songId) {
@@ -1616,13 +2232,54 @@ function copyText(idx, key) {
   if (s && s[key]) navigator.clipboard?.writeText(s[key]);
 }
 
-function remixWithScore(idx) {
+async function remixSong(songId) {
+  const input = document.getElementById(`remixStyle-${songId}`);
+  const msg = document.getElementById(`remixMsg-${songId}`);
+  const style = (input?.value || '').trim();
+  if (!style) {
+    if (msg) msg.textContent = 'Type a new style first (e.g. Lo-fi hip-hop, mellow piano, 86 BPM).';
+    input?.focus();
+    return;
+  }
+  const src = songs.find(s => s.id === songId);
+  if (msg) msg.textContent = 'Remixing... (keeps melody, re-renders in new style)';
+  const steps = Math.max(1, Math.min(64, Number(document.getElementById('odeSteps').value) || 8));
+  const r = await fetch(`/api/songs/${songId}/remix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      style,
+      cot: src?.cot === 'off' ? 'full' : (src?.cot || 'full'),
+      ode_steps: steps,
+      ode_method: document.getElementById('odeMethod').value,
+      reuse_abc: Boolean(src?.abc),
+      user_id: activeUser || undefined,
+      workspace_id: activeWorkspace || undefined,
+    }),
+  });
+  if (!r.ok) {
+    const err = await r.text();
+    if (msg) msg.textContent = `Remix failed: ${err}`;
+    return;
+  }
+  if (input) input.value = '';
+  if (msg) msg.textContent = 'Remix queued — watch it appear in the library!';
+}
+
+function remixDraft(idx) {
   const s = songs[idx];
   document.getElementById('title').value = `${s.title} (Remix)`;
   document.getElementById('lyrics').value = s.lyrics;
+  document.getElementById('style').value = '';
   document.getElementById('abcInput').value = s.abc || '';
   document.getElementById('abcDetails').open = true;
-  setCot('full');
+  setCot(s.cot === 'off' ? 'full' : (s.cot || 'full'));
+  document.getElementById('style').focus();
+  document.querySelector('.composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function remixWithScore(idx) {
+  remixDraft(idx);
 }
 
 function playIndex(idx) {
@@ -1640,7 +2297,7 @@ function playIndex(idx) {
   document.getElementById('pSub').textContent = s.style;
   const dl = document.getElementById('pDownload');
   dl.href = `/api/songs/${s.id}/download`;
-  dl.download = `${s.title || 'song'}.flac`;
+  dl.download = `${s.title || 'song'}.mp3`;
   renderSongs();
 }
 
@@ -1665,18 +2322,38 @@ audio.onended = () => nextSong();
 
 // Keyboard shortcuts: Escape = close modal, Space = play/pause, Left/Right = scrub 5s
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeSettings(); return; }
+  if (e.key === 'Escape') { closeSettings(); if (!localStorage.getItem('yue2_user')) return; closeUserPicker(); setComposerMode('manual'); return; }
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   else if (e.code === 'ArrowRight' && audio.duration) { audio.currentTime = Math.min(audio.duration, audio.currentTime + 5); }
   else if (e.code === 'ArrowLeft' && audio.duration) { audio.currentTime = Math.max(0, audio.currentTime - 5); }
 });
 
+const LLM_DEFAULTS = {
+  openai:      { url: '', model: '' },
+  'opencode-go': { url: 'https://opencode.ai/zen/go/v1', model: 'kimi-k3' },
+  openrouter:  { url: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
+  anthropic:   { url: 'https://api.anthropic.com', model: 'claude-3-5-haiku-latest' },
+  ollama:      { url: 'http://localhost:11434', model: 'qwen2.5:7b' },
+};
+const LLM_KNOWN_URLS = new Set([
+  '', 'http://192.168.1.142:18081', 'https://api.openai.com/v1',
+  'https://opencode.ai/zen/go/v1', 'https://opencode.ai/zen/go', 'https://opencode.ai/inference/go',
+  'https://openrouter.ai/api/v1', 'https://api.anthropic.com', 'http://localhost:11434',
+]);
+const IMG_DEFAULTS = {
+  sdapi:      { url: 'http://192.168.1.142:8080', model: 'qwen-image-2.1-turbo' },
+  openai:     { url: 'https://api.openai.com/v1', model: 'gpt-image-1' },
+  openrouter: { url: 'https://openrouter.ai/api/v1', model: 'google/gemini-2.5-flash-image-preview' },
+  fal:        { url: 'https://fal.run', model: 'fal-ai/flux/schnell' },
+};
+const IMG_KNOWN_URLS = new Set(['', 'http://192.168.1.142:8080', 'https://api.openai.com/v1', 'https://openrouter.ai/api/v1', 'https://fal.run']);
 const LLM_HINTS = {
-  openai:     { url: 'http://192.168.1.142:18081 or https://api.openai.com/v1', model: 'maple-cpu or gpt-4o-mini' },
-  openrouter: { url: 'https://openrouter.ai/api/v1 (optional)', model: 'openai/gpt-4o-mini' },
-  anthropic:  { url: 'https://api.anthropic.com (optional)', model: 'claude-3-5-haiku-latest' },
-  ollama:     { url: 'http://localhost:11434', model: 'qwen2.5:7b' },
+  openai:     { url: 'http://192.168.1.142:18081 or https://api.openai.com/v1 (blank ok for cloud)', model: 'maple-cpu or gpt-4o-mini' },
+  'opencode-go': { url: 'https://opencode.ai/zen/go/v1 — auto-filled (blank also works)', model: 'kimi-k3 (auto-filled if empty)' },
+  openrouter: { url: 'https://openrouter.ai/api/v1 — auto-filled', model: 'openai/gpt-4o-mini' },
+  anthropic:  { url: 'https://api.anthropic.com — auto-filled', model: 'claude-3-5-haiku-latest' },
+  ollama:     { url: 'http://localhost:11434 — auto-filled', model: 'qwen2.5:7b' },
 };
 const IMG_HINTS = {
   sdapi:      { url: 'http://192.168.1.142:8080', model: 'qwen-image-2.1-turbo' },
@@ -1685,18 +2362,80 @@ const IMG_HINTS = {
   fal:        { url: 'https://fal.run (optional)', model: 'fal-ai/flux/schnell' },
 };
 
-function onLlmProvChange() {
+function onLlmProvChange(autoFill = true) {
   const p = document.getElementById('setLlmProv').value;
   const h = LLM_HINTS[p] || LLM_HINTS.openai;
+  const d = LLM_DEFAULTS[p] || LLM_DEFAULTS.openai;
   document.getElementById('setLlmUrl').placeholder = h.url;
   document.getElementById('setLlmModel').placeholder = h.model;
+  // Switching provider auto-switches the base URL (and fills a sane model if empty).
+  // We only overwrite the URL when it is empty or still a known default, so custom servers are never clobbered.
+  if (autoFill) {
+    const urlEl = document.getElementById('setLlmUrl');
+    const cur = (urlEl.value || '').trim().replace(/\/$/, '');
+    if (!cur || LLM_KNOWN_URLS.has(cur) || LLM_KNOWN_URLS.has((urlEl.value || '').trim())) {
+      urlEl.value = d.url;
+    }
+    const modelEl = document.getElementById('setLlmModel');
+    if (!modelEl.value.trim() && d.model) modelEl.value = d.model;
+    refreshLlmModels();
+  }
 }
 
-function onImgProvChange() {
+let llmModelsTimer = null;
+function scheduleLlmModelsRefresh() {
+  clearTimeout(llmModelsTimer);
+  llmModelsTimer = setTimeout(refreshLlmModels, 600);
+}
+
+async function refreshLlmModels() {
+  const btn = document.getElementById('llmModelsBtn');
+  const out = document.getElementById('testLlmOut');
+  const list = document.getElementById('llmModelList');
+  const modelEl = document.getElementById('setLlmModel');
+  const prov = document.getElementById('setLlmProv').value;
+  const url = document.getElementById('setLlmUrl').value.trim();
+  const typedKey = document.getElementById('setLlmKey').value.trim();
+  if (btn) { btn.disabled = true; btn.textContent = '↻…'; }
+  try {
+    const qs = new URLSearchParams({ provider: prov, url });
+    if (typedKey) qs.set('api_key', typedKey);
+    const r = await fetch(`/api/llm-models?${qs.toString()}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Could not load models');
+    const models = data.models || [];
+    list.innerHTML = models.map(m => `<option value="${esc(m)}">`).join('');
+    if (!models.length) {
+      out.style.color = 'var(--ink-secondary)';
+      out.textContent = 'No models returned — you can still type one manually.';
+    } else {
+      // Keep a saved/typed value if it exists in the list; otherwise suggest the default or first entry.
+      const cur = modelEl.value.trim();
+      const def = (LLM_DEFAULTS[prov] || {}).model;
+      if (!cur) modelEl.value = (def && models.includes(def)) ? def : models[0];
+      out.style.color = '#34d399';
+      out.textContent = `${models.length} models loaded — pick from the dropdown or keep typing.`;
+    }
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = `Models: ${e.message} — you can still type manually.`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Load'; }
+  }
+}
+
+function onImgProvChange(autoFill = true) {
   const p = document.getElementById('setImgProv').value;
   const h = IMG_HINTS[p] || IMG_HINTS.sdapi;
+  const d = IMG_DEFAULTS[p] || IMG_DEFAULTS.sdapi;
   document.getElementById('setImgUrl').placeholder = h.url;
   document.getElementById('setImgModel').placeholder = h.model;
+  if (autoFill) {
+    const urlEl = document.getElementById('setImgUrl');
+    if (!urlEl.value.trim() || IMG_KNOWN_URLS.has(urlEl.value.trim())) urlEl.value = d.url;
+    const modelEl = document.getElementById('setImgModel');
+    if (!modelEl.value.trim() && d.model) modelEl.value = d.model;
+  }
   const isSd = p === 'sdapi';
   document.getElementById('imgStepsWrap').style.opacity = isSd ? '1' : '0.35';
   document.getElementById('imgCfgWrap').style.opacity = isSd ? '1' : '0.35';
@@ -1729,8 +2468,9 @@ async function openSettings() {
     document.getElementById('setYieldOn').checked = !!s.yield_enabled;
     document.getElementById('setUnloadUrl').value = s.unload_url || '';
 
-    onLlmProvChange();
-    onImgProvChange();
+    onLlmProvChange(false);
+    onImgProvChange(false);
+    refreshLlmModels();
     document.getElementById('settingsStatus').textContent = 'Saved locally to library/settings.json';
   } catch (err) {
     document.getElementById('settingsStatus').textContent = 'Failed to load settings';
@@ -1846,6 +2586,9 @@ async function startGenerate() {
     cover_prompt: document.getElementById('coverPrompt').value.trim() || null,
     generate_cover: document.getElementById('genCover').checked,
     source: 'ui',
+    user_id: activeUser,
+    workspace_id: activeWorkspace,
+    folder_id: (activeFolder !== 'all' && activeFolder !== '__none__') ? activeFolder : null,
   };
   document.getElementById('createBtn').disabled = true;
   await fetch('/api/generate', {
@@ -1910,6 +2653,9 @@ function connectEventStream() {
     const { song } = JSON.parse(e.data);
     activeJobs.delete(song.id);
     ensureClockTimer();
+    song.user_id = song.user_id || 'default';
+    song.workspace_id = song.workspace_id || 'default';
+    song.folder_id = song.folder_id || null;
     const exists = songs.findIndex(x => x.id === song.id);
     if (exists >= 0) songs[exists] = song;
     else {
@@ -1941,6 +2687,7 @@ function connectEventStream() {
       renderSongs();
     }
   });
+  es.addEventListener('library_moved', () => { fetchSongs(); });
   es.onerror = () => {
     es.close();
     setTimeout(connectEventStream, 2000);
@@ -1949,6 +2696,65 @@ function connectEventStream() {
 
 drawViz();
 fetchHealth();
+// Mobile: tabbed single-column UI (Compose / Library / Details). Desktop ignores it.
+function isMobileView() { return window.matchMedia('(max-width: 780px)').matches; }
+function setMobileTab(tab) {
+  document.body.dataset.mtab = tab;
+  try { localStorage.setItem('yue2_mtab', tab); } catch {}
+  document.querySelectorAll('[data-mtab-btn]').forEach(b => {
+    const on = b.dataset.mtabBtn === tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  // Details always has something to show once tracks exist.
+  if (tab === 'details' && selectedIdx === -1 && songs.length) {
+    selectInspector(currentIdx >= 0 ? currentIdx : 0);
+  }
+}
+function openInspector(idx) {
+  selectInspector(idx);
+  if (isMobileView()) setMobileTab('details');
+}
+function toggleSearch(force) {
+  const head = document.querySelector('.feed-head');
+  if (!head) return;
+  const input = document.getElementById('searchBox');
+  const open = force === undefined ? !head.classList.contains('search-open') : !!force;
+  head.classList.toggle('search-open', open);
+  const btn = document.getElementById('searchToggle');
+  if (btn) {
+    btn.innerHTML = open ? ICON_CLOSE : ICON_SEARCH;
+    btn.setAttribute('aria-expanded', String(open));
+    btn.setAttribute('aria-label', open ? 'Close search' : 'Search tracks');
+  }
+  if (open) setTimeout(() => input.focus(), 40);
+  else if (input.value) { input.value = ''; renderSongs(); }
+}
+function clearSearch() {
+  const input = document.getElementById('searchBox');
+  if (input) input.value = '';
+  toggleSearch(false);
+  renderSongs();
+}
+function goCompose() {
+  if (isMobileView()) setMobileTab('compose');
+  const el = document.getElementById('lyrics');
+  if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'center' }); }
+}
+(function initMobileTab() {
+  const saved = (function () { try { return localStorage.getItem('yue2_mtab'); } catch { return null; } })();
+  const start = saved || 'library';
+  document.body.dataset.mtab = start;
+  document.querySelectorAll('[data-mtab-btn]').forEach(b => {
+    const on = b.dataset.mtabBtn === start;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+})();
+window.addEventListener('resize', () => {
+  if (!isMobileView()) { document.body.dataset.mtab = document.body.dataset.mtab || 'library'; }
+  updateScopeFade();
+});
 fetchSongs();
 connectEventStream();
 </script>
