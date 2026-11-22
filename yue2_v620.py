@@ -388,7 +388,7 @@ class YuE2V620Engine:
         model_dir: str | Path | None = None,
         vae_dir: str | Path | None = None,
         ar_quant: str = "w4",       # "w4" (fastest), "w8" (near-lossless), "fp16" (exact fp16)
-        max_ar_seq: int = 12288,
+        max_ar_seq: int = 16384,
         device: str = "cuda",
     ):
         assert ar_quant in ("w4", "w8", "fp16")
@@ -781,6 +781,12 @@ class YuE2V620Engine:
     def _ar_prefill(self, prefix_ids: list[int], phase: str) -> torch.Tensor:
         """Exact FP16 AR prefill using rocBLAS+Triton causal attention; populates k_cache/v_cache."""
         M = len(prefix_ids)
+        if M < 1:
+            raise ValueError(f"AR {phase} prefix must be non-empty")
+        if M >= self.max_ar_seq:
+            raise ValueError(
+                f"AR {phase} prefix length ({M}) exceeds KV cache capacity max_ar_seq={self.max_ar_seq}"
+            )
         ids_t = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
         x = self.embed_tokens[ids_t].clone()  # [M, H]
         pos = torch.arange(M, dtype=torch.float32, device=self.device).unsqueeze(1)
@@ -842,11 +848,35 @@ class YuE2V620Engine:
         hist_count = 0
         eos = False
 
+        # Guard against KV-cache overflow (pos must stay < self.max_ar_seq during all decode steps)
+        prefix_len = len(prefix)
+        available = self.max_ar_seq - prefix_len
+        if available < 1:
+            raise ValueError(
+                f"AR {phase} prefix length ({prefix_len}) exceeds KV cache capacity max_ar_seq={self.max_ar_seq}"
+            )
+        eff_max_tokens = min(sampling.max_tokens, available)
+        if eff_max_tokens < sampling.max_tokens:
+            print(
+                f"[yue2] clamping {phase} max_tokens from {sampling.max_tokens} to {eff_max_tokens} "
+                f"(prefix={prefix_len}, max_ar_seq={self.max_ar_seq})",
+                flush=True,
+            )
+            sampling = Sampling(
+                temperature=sampling.temperature,
+                top_p=sampling.top_p,
+                top_k=sampling.top_k,
+                repetition_penalty=sampling.repetition_penalty,
+                penalty_window=sampling.penalty_window,
+                min_tokens=min(sampling.min_tokens, eff_max_tokens),
+                max_tokens=eff_max_tokens,
+            )
+
         # Ready for direct C++ fused decode loop (100% crash-free on ROCm 7.1 gfx1030)
         torch.cuda.synchronize(self.device)
         t_prefill = time.perf_counter() - t0
 
-        for step in range(sampling.max_tokens):
+        for step in range(eff_max_tokens):
             local_tok = sample_sliced_logits(
                 logits, sampling, self._hist_ring, min(hist_count, win),
                 step, end_local, gen, self.kernels,
@@ -859,7 +889,9 @@ class YuE2V620Engine:
             hist_count += 1
             history_global.append(global_tok)
 
-            if step + 1 < sampling.max_tokens:
+            if step + 1 < eff_max_tokens:
+                if prefix_len + step >= self.max_ar_seq:
+                    break
                 self.d_token.fill_(global_tok)
                 self._run_decode_step_cpp(phase)
                 logits = d_logits
@@ -1077,16 +1109,29 @@ class YuE2V620Engine:
             abc_text = self.tokenizer.decode(abc_ids)
             prefix = token_prefixes(req, self.tokenizer, abc_ids)
 
-        # 2. Semantic Tokens
-        _notify("semantic", 30, f"Generating semantic tokens (up to {max_semantic_tokens/25:.0f}s)...")
+        # 2. Semantic Tokens (clamp to KV-cache capacity to prevent OOB writes)
+        sem_room = self.max_ar_seq - len(prefix)
+        if sem_room < 1:
+            raise ValueError(
+                f"Semantic prefix length ({len(prefix)}) exceeds KV cache capacity max_ar_seq={self.max_ar_seq}; "
+                "try shorter lyrics or melody/off arrangement mode."
+            )
+        eff_max_sem = min(max(1, int(max_semantic_tokens)), sem_room)
+        if eff_max_sem < max_semantic_tokens:
+            print(
+                f"[yue2] clamping max_semantic_tokens from {max_semantic_tokens} to {eff_max_sem} "
+                f"(prefix={len(prefix)}, max_ar_seq={self.max_ar_seq})",
+                flush=True,
+            )
+        _notify("semantic", 30, f"Generating semantic tokens (up to {eff_max_sem/25:.0f}s)...")
         sem_sampling = Sampling(
             temperature=gen_cfg.semantic.temperature,
             top_p=gen_cfg.semantic.top_p,
             top_k=gen_cfg.semantic.top_k,
             repetition_penalty=gen_cfg.semantic.repetition_penalty,
             penalty_window=gen_cfg.semantic.penalty_window,
-            min_tokens=min(gen_cfg.semantic.min_tokens, max_semantic_tokens),
-            max_tokens=max_semantic_tokens,
+            min_tokens=min(gen_cfg.semantic.min_tokens, eff_max_sem),
+            max_tokens=eff_max_sem,
         )
         sem_raw, sem_timing = self.ar_generate(prefix, sem_sampling, seed, "semantic")
         codec = [t - CODEC_OFFSET for t in sem_raw]

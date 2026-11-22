@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
+import gc
 import html as html_lib
 import json
 import os
@@ -18,6 +20,7 @@ import shutil
 import subprocess
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -25,10 +28,10 @@ from urllib.parse import urlparse
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from yue2_v620 import YuE2V620Engine
 
@@ -75,6 +78,7 @@ app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 app.mount("/covers", StaticFiles(directory=str(COVERS_DIR)), name="covers")
 
 _engine: Optional[YuE2V620Engine] = None
+_engine_booted = False
 _gpu_lock = threading.Lock()
 _cover_lock = threading.Lock()
 _meta_lock = threading.Lock()
@@ -244,6 +248,38 @@ def _get_opencode_session() -> str:
 
 _event_loop: Optional[asyncio.AbstractEventLoop] = None
 _subscribers: set[asyncio.Queue] = set()
+_shutdown_event: Optional[asyncio.Event] = None
+_shutting_down = False
+_stop_watcher = threading.Event()
+
+
+def _signal_shutdown():
+    """Wake and drain all SSE subscribers and background loops on server shutdown."""
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+    _stop_watcher.set()
+    loop = _event_loop
+    if loop is not None and not loop.is_closed():
+        def _drain():
+            if _shutdown_event is not None:
+                _shutdown_event.set()
+            for q in list(_subscribers):
+                try:
+                    q.put_nowait(None)
+                except asyncio.QueueFull:
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(None)
+                    except Exception:
+                        pass
+            _subscribers.clear()
+
+        try:
+            loop.call_soon_threadsafe(_drain)
+        except RuntimeError:
+            pass
 
 GRADIENTS = [
     ["#ff5e62", "#ff9966"],
@@ -259,7 +295,7 @@ GRADIENTS = [
 
 def _broadcast(event_type: str, data: dict):
     """Push an SSE event to all connected browsers (thread-safe)."""
-    if _event_loop is None or not _subscribers:
+    if _shutting_down or _event_loop is None or _event_loop.is_closed() or not _subscribers:
         return
     msg = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -273,7 +309,10 @@ def _broadcast(event_type: str, data: dict):
         for q in dead:
             _subscribers.discard(q)
 
-    _event_loop.call_soon_threadsafe(_put)
+    try:
+        _event_loop.call_soon_threadsafe(_put)
+    except RuntimeError:
+        pass
 
 
 def _load_songs() -> list[dict]:
@@ -755,28 +794,108 @@ def _router_busy() -> bool:
     return False
 
 
+_GPU_ERROR_MARKERS = (
+    "hiperror",
+    "hip error",
+    "illegal memory access",
+    "illegal address",
+    "cuda error",
+    "device-side assert",
+    "out of memory",
+    "acceleratorerror",
+    "cudacachingallocator",
+    "rocm",
+)
+
+
+def _is_gpu_error(exc: BaseException) -> bool:
+    """Return True if exc (or its cause/context) looks like a HIP/CUDA/GPU fault."""
+    cur: Optional[BaseException] = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        text = f"{type(cur).__name__}: {cur}".lower()
+        if any(m in text for m in _GPU_ERROR_MARKERS):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def _release_engine() -> bool:
     """Free all of YuE2's VRAM (weights + VAE + allocator cache). Caller must hold _gpu_lock."""
     global _engine
     if _engine is None:
         return False
-    import gc
     import torch
     _engine = None
     gc.collect()
     if torch.cuda.is_available():
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    print(f"[yield] released YuE2 engine, VRAM now {torch.cuda.memory_reserved() / 1e9:.2f} GB reserved", flush=True)
+        try:
+            torch.cuda.synchronize()
+        except Exception as exc:
+            print(f"[gpu] synchronize during release failed: {exc}", flush=True)
+        try:
+            torch.cuda.empty_cache()
+        except Exception as exc:
+            print(f"[gpu] empty_cache during release failed: {exc}", flush=True)
+        try:
+            vram_gb = torch.cuda.memory_reserved() / 1e9
+            print(f"[yield] released YuE2 engine, VRAM now {vram_gb:.2f} GB reserved", flush=True)
+        except Exception:
+            print("[yield] released YuE2 engine", flush=True)
     _broadcast("engine_state", {"loaded": False})
     return True
 
 
+def _recover_gpu_engine(reason: str) -> tuple[bool, str]:
+    """Drop a poisoned engine, flush HIP/CUDA allocator state, and verify device health.
+
+    Caller must hold _gpu_lock. Returns (recovered, status_message).
+    """
+    global _engine
+    import torch
+
+    print(f"[gpu-recovery] resetting engine after GPU error: {reason}", flush=True)
+    _engine = None
+    gc.collect()
+
+    recovered = True
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+        except Exception as sync_exc:
+            print(f"[gpu-recovery] torch.cuda.synchronize failed: {sync_exc}", flush=True)
+        try:
+            torch.cuda.empty_cache()
+        except Exception as cache_exc:
+            print(f"[gpu-recovery] torch.cuda.empty_cache failed: {cache_exc}", flush=True)
+        if hasattr(torch.cuda, "ipc_collect"):
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+        try:
+            # Verify the HIP context is responsive after cleanup
+            _probe = torch.zeros(1, device="cuda")
+            _ = _probe.item()
+            del _probe
+            torch.cuda.synchronize()
+        except Exception as probe_exc:
+            recovered = False
+            print(f"[gpu-recovery] HIP context still poisoned after reset: {probe_exc}", flush=True)
+
+    _broadcast("engine_state", {"loaded": False, "gpu_reset": True, "recovered": recovered})
+    if recovered:
+        return True, "GPU reset, retry"
+    return False, "GPU reset attempted (HIP context still poisoned — retry or restart server)"
+
+
 def _ensure_engine():
     """Lazily (re)load the engine. Caller must hold _gpu_lock."""
-    global _engine
+    global _engine, _engine_booted
     if _engine is None:
         _engine = YuE2V620Engine(ar_quant="w4")
+        _engine_booted = True
         print(f"[yield] engine reloaded in {_engine.load_seconds:.2f}s", flush=True)
         _broadcast("engine_state", {"loaded": True})
     return _engine
@@ -784,8 +903,7 @@ def _ensure_engine():
 
 def _yield_watcher():
     """When a request hits the router (model loading/loaded) and we're idle, hand the GPU over."""
-    while True:
-        time.sleep(1.0)
+    while not _stop_watcher.wait(1.0):
         try:
             cfg = _get_settings()
             if not cfg.get("yield_enabled") or _engine is None:
@@ -805,18 +923,32 @@ def _yield_watcher():
             print(f"[yield] watcher error: {exc}", flush=True)
 
 
-@app.on_event("startup")
-async def startup_load():
-    global _engine, _songs, _event_loop
+@asynccontextmanager
+async def _lifespan(app_instance: FastAPI):
+    global _engine, _engine_booted, _songs, _event_loop, _shutdown_event, _shutting_down
+    _shutting_down = False
+    _stop_watcher.clear()
     _event_loop = asyncio.get_running_loop()
+    _shutdown_event = asyncio.Event()
     _load_users()
     _load_workspaces()
     _load_folders()
     _songs = _load_songs()
-    print("Loading YuE2-3B + YuE2-Vae on V620 (ar_quant=w4)...", flush=True)
-    _engine = await asyncio.to_thread(YuE2V620Engine, ar_quant="w4")
-    print(f"Engine ready in {_engine.load_seconds:.2f}s!", flush=True)
+    if os.environ.get("YUE2_SKIP_ENGINE_LOAD") == "1":
+        _engine_booted = True
+    else:
+        print("Loading YuE2-3B + YuE2-Vae on V620 (ar_quant=w4)...", flush=True)
+        _engine = await asyncio.to_thread(YuE2V620Engine, ar_quant="w4")
+        _engine_booted = True
+        print(f"Engine ready in {_engine.load_seconds:.2f}s!", flush=True)
     threading.Thread(target=_yield_watcher, daemon=True).start()
+    try:
+        yield
+    finally:
+        _signal_shutdown()
+
+
+app.router.lifespan_context = _lifespan
 
 
 class GenerateRequest(BaseModel):
@@ -836,6 +968,13 @@ class GenerateRequest(BaseModel):
     workspace_id: Optional[str] = Field(default=None)
     folder_id: Optional[str] = Field(default=None)
 
+    @field_validator("style", "lyrics")
+    @classmethod
+    def _require_non_blank(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(f"{info.field_name.capitalize()} cannot be empty")
+        return v
+
 
 class RemixRequest(BaseModel):
     style: str = Field(..., min_length=1)
@@ -853,6 +992,13 @@ class RemixRequest(BaseModel):
     user_id: Optional[str] = Field(default=None)
     workspace_id: Optional[str] = Field(default=None)
     folder_id: Optional[str] = Field(default=None)
+
+    @field_validator("style")
+    @classmethod
+    def _require_non_blank_style(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Style cannot be empty")
+        return v
 
 
 def _strip_abc_chords(abc: str) -> str:
@@ -931,8 +1077,8 @@ def _enqueue_generation(
         threading.Thread(target=_sidecar_title_and_cover, daemon=True).start()
 
     def _worker():
-        try:
-            with _gpu_lock:
+        with _gpu_lock:
+            try:
                 job["status"] = "running"
                 job["started_at"] = time.time()
                 job["detail"] = "Freeing GPU memory..."
@@ -1008,10 +1154,26 @@ def _enqueue_generation(
                 job["elapsed_seconds"] = round(t["e2e_seconds"], 2)
                 _broadcast("job_update", {"job": dict(job)})
                 _broadcast("song_added", {"song": song})
-        except Exception as exc:
-            job["status"] = "error"
-            job["error"] = str(exc)
-            _broadcast("job_update", {"job": dict(job)})
+            except Exception as exc:
+                tb = traceback.format_exc()
+                print(f"[job:{job_id}] generation failed at stage={job.get('stage')}:\n{tb}", flush=True)
+                job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
+                if _is_gpu_error(exc):
+                    print(
+                        "[gpu-error] For synchronous kernel attribution, repro with: "
+                        "AMD_SERIALIZE_KERNEL=3 TORCH_USE_HIP_DSA=1 python web_server.py",
+                        flush=True,
+                    )
+                    recovered, reset_msg = _recover_gpu_engine(str(exc))
+                    short_err = str(exc).splitlines()[0][:180]
+                    job["gpu_reset"] = True
+                    job["gpu_recovered"] = recovered
+                    job["detail"] = reset_msg
+                    job["error"] = f"{reset_msg} ({short_err})"
+                else:
+                    job["error"] = str(exc)
+                job["status"] = "error"
+                _broadcast("job_update", {"job": dict(job)})
 
     threading.Thread(target=_worker, daemon=True).start()
     return job_id
@@ -1667,12 +1829,14 @@ def index():
 
 
 @app.get("/api/events")
-async def events():
+async def events(request: Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.add(q)
 
     async def stream():
         try:
+            if _shutting_down:
+                return
             # Send active jobs on connect so late-joining tabs see in-progress MCP/UI renders immediately
             active = [
                 {**j, "elapsed_seconds": round(time.time() - j["started_at"], 1)}
@@ -1680,12 +1844,38 @@ async def events():
                 if j["status"] in ("queued", "running")
             ]
             yield f"event: hello\ndata: {json.dumps({'active_jobs': active})}\n\n"
-            while True:
-                try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
+            while not _shutting_down:
+                if await request.is_disconnected():
+                    break
+                get_task = asyncio.create_task(q.get())
+                wait_tasks = {get_task}
+                stop_task = None
+                if _shutdown_event is not None:
+                    if _shutdown_event.is_set():
+                        get_task.cancel()
+                        break
+                    stop_task = asyncio.create_task(_shutdown_event.wait())
+                    wait_tasks.add(stop_task)
+                done, pending = await asyncio.wait(
+                    wait_tasks,
+                    timeout=15.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if stop_task is not None and stop_task in done:
+                    break
+                if get_task in done:
+                    msg = get_task.result()
+                    if msg is None:
+                        break
                     yield msg
-                except asyncio.TimeoutError:
+                else:
+                    if _shutting_down or await request.is_disconnected():
+                        break
                     yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
         finally:
             _subscribers.discard(q)
 
@@ -1777,7 +1967,7 @@ def job_status(job_id: str):
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
-    if _engine is None and not _get_settings().get("yield_enabled"):
+    if _engine is None and not _engine_booted:
         raise HTTPException(503, "Engine is still loading")
     seed = req.seed if req.seed is not None else random.randint(1, 2_000_000)
     job_id = _enqueue_generation(
@@ -1803,7 +1993,7 @@ def generate(req: GenerateRequest):
 @app.post("/api/songs/{song_id}/remix")
 def remix_song(song_id: str, req: RemixRequest):
     """Remix a library song in a new style, reusing its ABC score (melody/chords)."""
-    if _engine is None and not _get_settings().get("yield_enabled"):
+    if _engine is None and not _engine_booted:
         raise HTTPException(503, "Engine is still loading")
     src = next((s for s in _songs if s["id"] == song_id), None)
     if not src:
@@ -1842,5 +2032,20 @@ def remix_song(song_id: str, req: RemixRequest):
     return {"job_id": job_id, "remixed_from": song_id}
 
 
+class _GracefulServer(uvicorn.Server):
+    """Uvicorn server that closes active SSE streams immediately on SIGINT/SIGTERM."""
+
+    def handle_exit(self, sig: int, frame) -> None:
+        _signal_shutdown()
+        super().handle_exit(sig, frame)
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8789, log_level="info")
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8789,
+        log_level="info",
+        timeout_graceful_shutdown=5,
+    )
+    _GracefulServer(config).run()

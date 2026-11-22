@@ -183,6 +183,22 @@
     border-color: rgba(245, 158, 11, 0.65);
     background: #101013;
   }
+  input.field-error, textarea.field-error, select.field-error {
+    border-color: var(--danger) !important;
+    box-shadow: 0 0 0 3px rgba(229, 83, 75, 0.24);
+  }
+  .create-error {
+    display: none;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: rgba(229, 83, 75, 0.14);
+    border: 1px solid rgba(229, 83, 75, 0.45);
+    color: #fca5a5;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .create-error.visible { display: block; }
   textarea { resize: vertical; line-height: 1.5; }
   textarea::placeholder, input::placeholder { color: var(--ink-muted); }
 
@@ -1211,7 +1227,7 @@
           <label class="field-label" for="lyrics">Lyrics</label>
           <button type="button" class="text-action" onclick="fillSample()">Insert example</button>
         </div>
-        <textarea id="lyrics" rows="7" placeholder="[Verse 1]&#10;Write lyrics or leave instrumental...">[Verse 1]
+        <textarea id="lyrics" rows="7" oninput="clearFieldError('lyrics')" placeholder="[Verse 1]&#10;Write lyrics or leave instrumental...">[Verse 1]
 Neon lights flicker on the midnight street
 Static in the air and a steady heartbeat
 Chasing down echoes of a silver sound
@@ -1234,7 +1250,7 @@ Living for the music that our hands have made</textarea>
         <div class="field-row">
           <label class="field-label" for="style">Style &amp; Instrumentation</label>
         </div>
-        <textarea id="style" rows="3" placeholder="Genre, vocal tone, instruments, tempo...">Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM</textarea>
+        <textarea id="style" rows="3" oninput="clearFieldError('style')" placeholder="Genre, vocal tone, instruments, tempo...">Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM</textarea>
         <div class="pill-row">
           <button type="button" class="pill" onclick="setStyle('Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM')">Synth-Pop</button>
           <button type="button" class="pill" onclick="setStyle('Jazz-funk, warm soulful lead vocal, Rhodes electric piano, slap bass, crisp horn section, tight groove')">Jazz-Funk</button>
@@ -1323,6 +1339,7 @@ Living for the music that our hands have made</textarea>
     </div>
 
     <div class="composer-foot">
+      <div class="create-error" id="createError" role="alert" aria-live="polite"></div>
       <button type="button" class="btn-create" id="createBtn" onclick="startGenerate()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         <span>Create song</span>
@@ -1706,10 +1723,14 @@ function setCot(val) {
   cotMode = val;
   document.querySelectorAll('#cotCtrl .seg').forEach(b => b.classList.toggle('active', b.dataset.val === val));
 }
-function setStyle(s) { document.getElementById('style').value = s; }
+function setStyle(s) {
+  document.getElementById('style').value = s;
+  clearFieldError('style');
+}
 function addSection(tag) {
   const el = document.getElementById('lyrics');
   el.value = (el.value.trimEnd() + '\n\n' + tag + '\n').trimStart();
+  clearFieldError('lyrics');
   el.focus();
 }
 async function importFromLink() {
@@ -1730,8 +1751,8 @@ async function importFromLink() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Import failed');
     if (data.title) document.getElementById('title').value = data.title;
-    if (data.style) document.getElementById('style').value = data.style;
-    if (data.lyrics) document.getElementById('lyrics').value = data.lyrics;
+    if (data.style) { document.getElementById('style').value = data.style; clearFieldError('style'); }
+    if (data.lyrics) { document.getElementById('lyrics').value = data.lyrics; clearFieldError('lyrics'); }
     msg.style.color = '#34d399';
     msg.textContent = `Loaded from ${data.source.toUpperCase()}`;
     input.value = '';
@@ -1745,6 +1766,7 @@ async function importFromLink() {
 
 function fillSample() {
   document.getElementById('title').value = 'Electric in the Rain';
+  clearFieldError('lyrics');
   document.getElementById('lyrics').value = `[Verse 1]
 Neon lights flicker on the midnight street
 Static in the air and a steady heartbeat
@@ -2015,6 +2037,8 @@ async function runCompose(createAfter) {
     document.getElementById('title').value = data.title || '';
     document.getElementById('style').value = data.style || '';
     document.getElementById('lyrics').value = data.lyrics || '';
+    if (data.style) clearFieldError('style');
+    if (data.lyrics) clearFieldError('lyrics');
     if (data.cover_prompt) document.getElementById('coverPrompt').value = data.cover_prompt;
     out.textContent = `"${data.title}" written — review it in Manual mode, then Create song.`;
     st.textContent = 'Done! Switch to Manual to tweak, or press Write & Create.';
@@ -2039,7 +2063,7 @@ function renderGeneratingCard(job) {
   const modeLabel = job.cot === 'full' ? 'Chords + Melody' : job.cot === 'melody' ? 'Melody' : 'Direct';
   const srcBadge = job.source === 'mcp' ? `<span class="src-badge">MCP</span>` : '';
   const statusPill = isErr
-    ? `<span class="gen-pill err">Failed</span>`
+    ? `<span class="gen-pill err">${job.gpu_reset ? 'GPU Reset' : 'Failed'}</span>`
     : `<span class="gen-pill">${job.status === 'queued' ? 'Queued' : 'Generating'}</span>`;
   const sleeveInner = job.cover_url
     ? `<img class="cover-pop" src="${esc(job.cover_url)}?j=${job.job_id}" alt="${esc(job.title || 'Generating')}" />`
@@ -2568,15 +2592,87 @@ async function delSong(id) {
   await fetchSongs();
 }
 
+function setFieldError(id, hasErr) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('field-error', !!hasErr);
+  if (hasErr) el.setAttribute('aria-invalid', 'true');
+  else el.removeAttribute('aria-invalid');
+}
+
+function clearFieldError(id) {
+  setFieldError(id, false);
+  const lyricsErr = document.getElementById('lyrics')?.classList.contains('field-error');
+  const styleErr = document.getElementById('style')?.classList.contains('field-error');
+  if (!lyricsErr && !styleErr) {
+    const errEl = document.getElementById('createError');
+    if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
+  }
+}
+
+function showCreateError(msg) {
+  const errEl = document.getElementById('createError');
+  if (!errEl) return;
+  errEl.textContent = msg;
+  errEl.classList.add('visible');
+}
+
+function clearCreateError() {
+  setFieldError('lyrics', false);
+  setFieldError('style', false);
+  const errEl = document.getElementById('createError');
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
+}
+
+function formatApiError(data, status) {
+  if (data && Array.isArray(data.detail)) {
+    const parts = data.detail.map(d => {
+      const loc = Array.isArray(d.loc) ? d.loc.filter(x => x !== 'body').join('.') : '';
+      return loc ? `${loc}: ${d.msg}` : (d.msg || 'Invalid input');
+    });
+    return parts.join(' · ') || `Validation error (${status})`;
+  }
+  if (data && typeof data.detail === 'string' && data.detail.trim()) {
+    return data.detail.trim();
+  }
+  return `Generation failed (HTTP ${status})`;
+}
+
 async function startGenerate() {
+  const lyricsEl = document.getElementById('lyrics');
+  const styleEl = document.getElementById('style');
+  const lyricsVal = (lyricsEl?.value || '').trim();
+  const styleVal = (styleEl?.value || '').trim();
+
+  clearCreateError();
+  const missingLyrics = !lyricsVal;
+  const missingStyle = !styleVal;
+  if (missingLyrics || missingStyle) {
+    if (composerMode !== 'manual') setComposerMode('manual');
+    setFieldError('lyrics', missingLyrics);
+    setFieldError('style', missingStyle);
+    const msg = (missingLyrics && missingStyle)
+      ? 'Lyrics and Style are required before creating a song.'
+      : missingLyrics
+        ? 'Lyrics are required before creating a song.'
+        : 'Style & Instrumentation is required before creating a song.';
+    showCreateError(msg);
+    const first = missingLyrics ? lyricsEl : styleEl;
+    if (first) {
+      first.focus();
+      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+
   const steps = Math.max(1, Math.min(64, Number(document.getElementById('odeSteps').value) || 8));
   const method = document.getElementById('odeMethod').value;
   const seedRaw = document.getElementById('seed').value.trim();
   const autoDur = document.getElementById('autoDur').checked;
   const payload = {
     title: document.getElementById('title').value,
-    style: document.getElementById('style').value,
-    lyrics: document.getElementById('lyrics').value,
+    style: styleVal,
+    lyrics: lyricsVal,
     cot: cotMode,
     ode_steps: steps,
     ode_method: method,
@@ -2590,12 +2686,33 @@ async function startGenerate() {
     workspace_id: activeWorkspace,
     folder_id: (activeFolder !== 'all' && activeFolder !== '__none__') ? activeFolder : null,
   };
-  document.getElementById('createBtn').disabled = true;
-  await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const btn = document.getElementById('createBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) {
+      if (data && Array.isArray(data.detail)) {
+        for (const item of data.detail) {
+          const loc = Array.isArray(item.loc) ? item.loc : [];
+          if (loc.includes('lyrics')) setFieldError('lyrics', true);
+          if (loc.includes('style')) setFieldError('style', true);
+        }
+      }
+      showCreateError(formatApiError(data, res.status));
+      ensureClockTimer();
+      return;
+    }
+    clearCreateError();
+  } catch (err) {
+    showCreateError(err?.message || 'Could not reach server. Please try again.');
+    ensureClockTimer();
+  }
 }
 
 // Live SSE stream: receives ALL UI + MCP generations & cover art updates in real time!
@@ -2688,6 +2805,7 @@ function connectEventStream() {
     }
   });
   es.addEventListener('library_moved', () => { fetchSongs(); });
+  es.addEventListener('engine_state', () => { fetchHealth(); });
   es.onerror = () => {
     es.close();
     setTimeout(connectEventStream, 2000);
