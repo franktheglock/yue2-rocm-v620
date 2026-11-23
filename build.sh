@@ -13,7 +13,8 @@ if [[ -z "${GPU_ARCH:-}" ]]; then
 fi
 GPU_ARCH="${GPU_ARCH:-gfx1030}"
 
-echo "Building libv620_kernels.so for ${GPU_ARCH}..."
-hipcc -O3 --offload-arch="${GPU_ARCH}" -shared -fPIC \
+HIPCC="${HIPCC:-hipcc}"
+echo "Building libv620_kernels.so for ${GPU_ARCH} with ${HIPCC}..."
+"${HIPCC}" -O3 --offload-arch="${GPU_ARCH}" -shared -fPIC \
   "${DIR}/v620_kernels.hip" -o "${DIR}/libv620_kernels.so"
 ls -lh "${DIR}/libv620_kernels.so"

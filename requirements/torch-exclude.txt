@@ -1,0 +1,6 @@
+# Never let the resolver pull PyTorch from PyPI (that would be a CUDA build).
+# setup.sh installs the ROCm wheels from the PyTorch ROCm index first.
+torch
+torchaudio
+torchvision
+triton

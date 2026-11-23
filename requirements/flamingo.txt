@@ -1,0 +1,9 @@
+# Isolated environment (.venv-flamingo): Music Flamingo + Parakeet workers.
+# Needs transformers >= 5.6, which conflicts with YuE2's pinned 4.57.6.
+# PyTorch (ROCm) is installed separately by setup.sh from the PyTorch ROCm index.
+transformers==5.24.0
+tokenizers==0.23.3
+huggingface-hub==2.4.0
+safetensors==0.8.0
+accelerate==1.16.0
+numpy>=2.0

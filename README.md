@@ -60,22 +60,17 @@ All tracks below were generated end-to-end on a single AMD Radeon PRO V620 (`ar_
 
 ### 1. Prerequisites
 - AMD ROCm GPU (tested on Radeon PRO V620 / `gfx1030`, 24 GB+ VRAM recommended)
-- PyTorch with ROCm (`torch` + `hipcc`)
-- `yue2_infer` wheel from [`m-a-p/YuE2-3B`](https://huggingface.co/m-a-p/YuE2-3B)
+- [`uv`](https://docs.astral.sh/uv/) (installs Python 3.12 for you), `ffmpeg`, and `hipcc` from the ROCm 7.x HIP SDK (for the custom kernels)
+- About 30 GB of disk for the two environments (ROCm PyTorch is ~14 GB each)
 
 ```bash
-# Install dependencies (using your ROCm PyTorch Python)
-pip install -e . --no-deps
-pip install transformers==4.57.6 huggingface-hub==0.36.2 safetensors==0.7.0 \
-            tiktoken==0.12.0 soundfile accelerate fastapi uvicorn httpx mcp
-
-# Install yue2_infer wheel (without overwriting ROCm torch)
-hf download m-a-p/YuE2-3B yue2_infer-0.1.5-py3-none-any.whl --local-dir .
-pip install --no-deps ./yue2_infer-0.1.5-py3-none-any.whl
-
-# Compile custom HIP kernels (auto-detects GPU arch, or set GPU_ARCH=gfx1030 / gfx1100)
-./build.sh
+./setup.sh            # builds .venv + .venv-flamingo, compiles kernels, then checks everything
+./setup.sh check      # re-verify any time
 ```
+`setup.sh` installs ROCm PyTorch (`torch 2.13.0+rocm7.1`) from the PyTorch ROCm index, the pinned deps in `requirements/`, and the `yue2_infer` wheel from [`m-a-p/YuE2-3B`](https://huggingface.co/m-a-p/YuE2-3B) (with `--no-deps`, so its CUDA torch pin can't replace the ROCm build). Run one step with `./setup.sh core|flamingo|kernels`; override versions with `TORCH_INDEX_URL`, `TORCH_VERSION`, `PYTHON_VERSION`, `HIPCC`, or `GPU_ARCH` (see the header of `setup.sh`).
+
+- **`.venv`**: YuE2 engine, Studio web server, MCP server, SheetSage2.
+- **`.venv-flamingo`** (optional): Music Flamingo + Parakeet for *From Audio*. They need transformers 5.x, which conflicts with YuE2's pinned 4.57.6.
 
 ### 2. CLI Generation
 ```bash
@@ -89,6 +84,18 @@ python run_yue2.py --ar-quant w4 --cot full --ode-steps 5 --ode-method midpoint 
 python web_server.py
 # Open http://localhost:8789/  (Swagger API docs at /docs)
 ```
+
+#### Optional models (Instrumental mode & From Audio)
+These features need extra weights. The Studio shows a **Download** button wherever one is missing (and lists them all under *Settings → Local Models*), or fetch them yourself into the repo root:
+
+| Feature | Folder | Hugging Face repo | Size | License |
+|---|---|---|---|---|
+| Instrumental mode | `YuE2-Inst-LoRA/` | [`Mothersuperior/YuE2-instrumental-cot-full-loras`](https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras) (bf16 file only) | 0.14 GB | CC BY-NC 4.0 |
+| Derive Style Prompt | `music-flamingo-2601-hf/` | [`nvidia/music-flamingo-2601-hf`](https://huggingface.co/nvidia/music-flamingo-2601-hf) | 16.5 GB | NVIDIA OneWay Noncommercial |
+| Cover score (ABC + structure) | `SheetSage2/` + `MERT-v2-FullSong/` | [`m-a-p/SheetSage2`](https://huggingface.co/m-a-p/SheetSage2) + [`m-a-p/MERT-v2-FullSong`](https://huggingface.co/m-a-p/MERT-v2-FullSong) | 2.8 GB | CC BY-NC 4.0 |
+| Lyrics extraction | `parakeet-tdt-0.6b-v3/` | [`nvidia/parakeet-tdt-0.6b-v3`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (skip `*.nemo`, `*.gguf`) | 2.5 GB | CC BY 4.0 |
+
+Set `YUE2_MODELS_DIR=/big/disk/models` to have in-app downloads land there (symlinked into the repo). Music Flamingo and Parakeet also need the separate `.venv-flamingo` environment; build it with `./setup.sh flamingo`.
 Optional AI song auto-naming & album cover art (runs in parallel with audio generation; supports **OpenAI-compatible**, **OpenRouter**, **Anthropic**, and **Ollama** LLMs + **SDAPI/A1111/Forge**, **OpenAI**, **OpenRouter**, and **fal.ai** image gen):
 ```bash
 # Example 1: Local llama.cpp + SDAPI / Qwen-Image

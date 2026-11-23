@@ -1223,6 +1223,19 @@
   @media (prefers-reduced-motion: reduce) {
     .pulse-bars span { animation: none; height: 10px; }
   }
+  /* Optional-model download cards */
+  .model-box { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .model-box:empty { display:none; }
+  .model-card { border:1px solid var(--hairline-strong); border-radius:var(--radius-md); background:var(--bg-raised); padding:10px 12px; display:flex; flex-direction:column; gap:7px; }
+  .model-card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .model-card-name { font-size:0.82rem; font-weight:600; color:var(--ink-primary); }
+  .model-card-meta { font-size:0.7rem; color:var(--ink-muted); line-height:1.45; }
+  .model-card-meta a { color:var(--ink-secondary); }
+  .model-card .btn-secondary { margin-top:0; height:30px; padding:0 12px; font-size:0.76rem; white-space:nowrap; }
+  .model-card-ok { font-size:0.72rem; color:var(--accent); white-space:nowrap; }
+  .model-card-err { font-size:0.72rem; color:var(--danger); word-break:break-word; }
+  .model-prog { height:5px; border-radius:3px; background:var(--bg-input); overflow:hidden; }
+  .model-prog > span { display:block; height:100%; width:0; background:var(--accent); transition:width 0.6s ease; }
 </style>
 </head>
 <body data-mtab="library">
@@ -1308,6 +1321,7 @@
             <div class="dropzone-sub" id="audioDropSub">Up to 50 MB &middot; runs locally on V620</div>
           </div>
           <audio id="audioPreview" controls style="display:none;width:100%;margin-top:8px;height:34px"></audio>
+          <div class="model-box" id="audioModelsBox"></div>
         </div>
 
         <div class="field" style="margin-bottom:10px;display:flex;flex-direction:column;gap:6px">
@@ -1368,6 +1382,7 @@
           </div>
           <button type="button" class="text-action" id="insertExampleBtn" onclick="fillSample()">Insert example</button>
         </div>
+        <div class="model-box" id="instModelBox" style="margin:0 0 8px"></div>
         <textarea id="lyrics" rows="7" oninput="clearFieldError('lyrics')" placeholder="[Verse 1]&#10;Write lyrics or leave instrumental...">[Verse 1]
 Neon lights flicker on the midnight street
 Static in the air and a steady heartbeat
@@ -1695,6 +1710,13 @@ Living for the music that our hands have made</textarea>
         </div>
         <div id="unloadOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary)"></div>
       </div>
+      <div class="modal-sec">
+        <div class="modal-sec-head">
+          <span class="modal-sec-title">Local Models &middot; Optional Features</span>
+        </div>
+        <div class="model-box" id="settingsModelsBox" style="margin-top:0"></div>
+        <div id="settingsModelsDir" style="font-size:0.7rem;color:var(--ink-muted);margin-top:6px"></div>
+      </div>
     </div>
     </div><!-- /modal-scroll -->
     <div class="modal-foot">
@@ -1959,6 +1981,7 @@ function toggleInstrumental(forceVal) {
   } else {
     setCot(cotMode);
   }
+  renderModelBoxes();
 }
 function setStyle(s) {
   document.getElementById('style').value = s;
@@ -2049,6 +2072,84 @@ async function fetchHealth() {
     }
     setCot(cotMode);
   } catch {}
+  fetchModels();
+}
+
+// ---- Optional models: show a download card wherever a feature's weights are missing ----
+let modelState = {};
+let modelsDir = '';
+let modelPollTimer = null;
+function fmtGB(b) { return (b / 1e9).toFixed(b >= 1e10 ? 0 : 1) + ' GB'; }
+async function fetchModels() {
+  try {
+    const r = await (await fetch('/api/models')).json();
+    modelState = r.models || {};
+    modelsDir = r.models_dir || '';
+  } catch { return; }
+  renderModelBoxes();
+  const running = Object.values(modelState).some(m => m.download && m.download.status === 'running');
+  if (running && !modelPollTimer) {
+    modelPollTimer = setInterval(fetchModels, 1500);
+  } else if (!running && modelPollTimer) {
+    clearInterval(modelPollTimer);
+    modelPollTimer = null;
+  }
+}
+async function startModelDownload(key) {
+  try {
+    const r = await fetch(`/api/models/${encodeURIComponent(key)}/download`, { method: 'POST' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert('Download failed to start: ' + (err.detail || r.status));
+    }
+  } catch (e) {
+    alert('Download failed to start: ' + e);
+  }
+  fetchModels();
+}
+function modelCardHtml(key, m, { showReady = false } = {}) {
+  const dl = m.download || {};
+  const running = dl.status === 'running';
+  const pct = dl.total_bytes ? Math.min(100, Math.round(100 * dl.done_bytes / dl.total_bytes)) : 0;
+  const repos = (m.repos || []).map(r => `<a href="https://huggingface.co/${esc(r)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(' + ');
+  let right;
+  if (m.present && !running) {
+    right = m.venv_ok ? '<span class="model-card-ok">Installed</span>' : '<span class="model-card-err">Needs .venv-flamingo</span>';
+  } else if (running) {
+    right = `<span class="model-card-ok">${dl.total_bytes ? `${fmtGB(dl.done_bytes)} / ${fmtGB(dl.total_bytes)}` : 'Starting...'}</span>`;
+  } else {
+    right = `<button type="button" class="btn-secondary" onclick="startModelDownload('${key}')">${m.partial || dl.status === 'error' ? 'Resume download' : 'Download'}</button>`;
+  }
+  let extra = '';
+  if (running) extra += `<div class="model-prog"><span style="width:${pct}%"></span></div>`;
+  if (dl.status === 'error' && dl.error) extra += `<div class="model-card-err">${esc(dl.error)}</div>`;
+  if (m.present && !m.venv_ok) extra += `<div class="model-card-err">Weights are installed, but this model runs in the separate <code>.venv-flamingo</code> environment (transformers &ge; 5.6), which isn't set up on this host. Run <code>./setup.sh flamingo</code>.</div>`;
+  else if (!m.present && !m.venv_ok) extra += `<div class="model-card-meta">Also needs the separate <code>.venv-flamingo</code> environment: run <code>./setup.sh flamingo</code>.</div>`;
+  return `<div class="model-card">
+    <div class="model-card-head">
+      <div><div class="model-card-name">${esc(m.label)}${m.present ? '' : ' &middot; not installed'}</div>
+      <div class="model-card-meta">Needed for ${esc(m.feature)} &middot; ${repos} &middot; ${esc(m.license)}</div></div>
+      ${right}
+    </div>${extra}
+  </div>`;
+}
+function renderModelBox(boxId, keys, opts = {}) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  const cards = keys.filter(k => modelState[k]).filter(k => {
+    const m = modelState[k];
+    return opts.all || !m.ready || (m.download && m.download.status === 'running');
+  }).map(k => modelCardHtml(k, modelState[k], opts));
+  box.innerHTML = cards.join('');
+}
+function renderModelBoxes() {
+  if (!Object.keys(modelState).length) return;
+  renderModelBox('audioModelsBox', ['music_flamingo', 'sheetsage2', 'parakeet']);
+  if (isInstrumental) renderModelBox('instModelBox', ['inst_lora']);
+  else { const b = document.getElementById('instModelBox'); if (b) b.innerHTML = ''; }
+  renderModelBox('settingsModelsBox', Object.keys(modelState), { all: true });
+  const dirEl = document.getElementById('settingsModelsDir');
+  if (dirEl) dirEl.textContent = modelsDir ? `New downloads go to ${modelsDir} (set YUE2_MODELS_DIR to change).` : '';
 }
 
 async function fetchSongs() {
@@ -2959,6 +3060,7 @@ function onImgProvChange(autoFill = true) {
 
 async function openSettings() {
   const modal = document.getElementById('settingsModal');
+  fetchModels();
   document.getElementById('settingsStatus').textContent = 'Loading...';
   document.getElementById('testLlmOut').textContent = '';
   modal.classList.add('open');
@@ -3306,6 +3408,7 @@ function connectEventStream() {
   });
   es.addEventListener('library_moved', () => { fetchSongs(); });
   es.addEventListener('engine_state', () => { fetchHealth(); });
+  es.addEventListener('models_changed', () => { fetchHealth(); });
   es.onerror = () => {
     es.close();
     setTimeout(connectEventStream, 2000);

@@ -897,7 +897,10 @@ def _recover_gpu_engine(reason: str) -> tuple[bool, str]:
 
 def _ensure_engine():
     """Lazily (re)load the engine. Caller must hold _gpu_lock."""
-    global _engine, _engine_booted
+    global _engine, _engine_booted, _engine_needs_reload
+    if _engine_needs_reload:
+        _engine_needs_reload = False
+        _release_engine()  # pick up a model (e.g. the instrumental LoRA) downloaded mid-job
     if _engine is None:
         _engine = YuE2V620Engine(ar_quant="w4")
         _engine_booted = True
@@ -1980,6 +1983,227 @@ async def events(request: Request):
     )
 
 
+# --------------------------------------------------------------------------------------------
+# Optional models: registry, presence checks and in-app downloads from Hugging Face.
+# Each model lives in BASE_DIR/<dir> (a symlink is fine). New downloads go to YUE2_MODELS_DIR
+# when set (symlinked into BASE_DIR), else straight into BASE_DIR.
+# --------------------------------------------------------------------------------------------
+FLAMINGO_PY = BASE_DIR / ".venv-flamingo" / "bin" / "python"
+_DL_MARKER = ".yue2-downloading"
+
+MODEL_SPECS: dict[str, dict] = {
+    "inst_lora": {
+        "label": "Instrumental LoRA",
+        "feature": "Instrumental mode",
+        "license": "CC BY-NC 4.0",
+        "needs_flamingo_venv": False,
+        "parts": [{
+            "repo": "Mothersuperior/YuE2-instrumental-cot-full-loras",
+            "dir": "YuE2-Inst-LoRA",
+            "check": "ar_lora_inst_v3abc.bf16.safetensors",
+            "allow": ["ar_lora_inst_v3abc.bf16.safetensors", "README.md"],
+        }],
+    },
+    "music_flamingo": {
+        "label": "Music Flamingo 2601",
+        "feature": "Derive Style Prompt",
+        "license": "NVIDIA OneWay Noncommercial",
+        "needs_flamingo_venv": True,
+        "parts": [{"repo": "nvidia/music-flamingo-2601-hf", "dir": "music-flamingo-2601-hf", "check": "model.safetensors"}],
+    },
+    "sheetsage2": {
+        "label": "SheetSage2 + MERT-v2",
+        "feature": "Cover in New Style (score)",
+        "license": "CC BY-NC 4.0",
+        "needs_flamingo_venv": False,
+        "parts": [
+            {"repo": "m-a-p/SheetSage2", "dir": "SheetSage2", "check": "model.safetensors"},
+            {"repo": "m-a-p/MERT-v2-FullSong", "dir": "MERT-v2-FullSong", "check": "model.safetensors"},
+        ],
+    },
+    "parakeet": {
+        "label": "Parakeet TDT 0.6B v3",
+        "feature": "Lyrics extraction",
+        "license": "CC BY 4.0",
+        "needs_flamingo_venv": True,
+        "parts": [{
+            "repo": "nvidia/parakeet-tdt-0.6b-v3",
+            "dir": "parakeet-tdt-0.6b-v3",
+            "check": "model.safetensors",
+            "ignore": ["*.nemo", "*.gguf"],
+        }],
+    },
+}
+
+_downloads: dict[str, dict] = {}
+_downloads_lock = threading.Lock()
+_engine_needs_reload = False
+
+
+def _part_present(part: dict) -> bool:
+    d = BASE_DIR / part["dir"]
+    return (d / part["check"]).is_file() and not (d / _DL_MARKER).exists()
+
+
+def _model_files_present(key: str) -> bool:
+    if (_downloads.get(key) or {}).get("status") == "running":
+        return False
+    return all(_part_present(p) for p in MODEL_SPECS[key]["parts"])
+
+
+def _model_ready(key: str) -> bool:
+    """Files present and (when needed) the isolated .venv-flamingo interpreter exists."""
+    spec = MODEL_SPECS[key]
+    return _model_files_present(key) and (not spec["needs_flamingo_venv"] or FLAMINGO_PY.is_file())
+
+
+def _part_target_dir(part: dict) -> Path:
+    """Where a part's files should land; creates the BASE_DIR symlink when using YUE2_MODELS_DIR."""
+    link = BASE_DIR / part["dir"]
+    if link.is_symlink():
+        target = Path(os.path.realpath(link))  # follows even a dangling link
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+    if link.exists():
+        return link
+    models_root = os.environ.get("YUE2_MODELS_DIR")
+    if models_root:
+        target = Path(models_root).expanduser() / part["dir"]
+        target.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+        return target
+    link.mkdir(parents=True, exist_ok=True)
+    return link
+
+
+def _dir_bytes(path: Path) -> int:
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def _download_worker(key: str):
+    global _engine_needs_reload
+    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub.utils import filter_repo_objects
+
+    state = _downloads[key]
+    spec = MODEL_SPECS[key]
+    try:
+        api = HfApi()
+        plan = []
+        for part in spec["parts"]:
+            info = api.model_info(part["repo"], files_metadata=True)
+            files = list(filter_repo_objects(
+                info.siblings, allow_patterns=part.get("allow"), ignore_patterns=part.get("ignore"),
+                key=lambda s: s.rfilename,
+            ))
+            plan.append((part, sum(s.size or 0 for s in files)))
+        state["total_bytes"] = sum(sz for _, sz in plan)
+        done_bytes = 0
+        for part, part_total in plan:
+            if _part_present(part):
+                done_bytes += part_total
+                state["done_bytes"] = done_bytes
+                continue
+            target = _part_target_dir(part)
+            state["current"] = {"dir": str(target), "base": done_bytes, "start_bytes": _dir_bytes(target), "total": part_total}
+            (target / _DL_MARKER).write_text(part["repo"])
+            print(f"[models] downloading {part['repo']} -> {target}", flush=True)
+            snapshot_download(
+                part["repo"],
+                local_dir=str(target),
+                allow_patterns=part.get("allow"),
+                ignore_patterns=part.get("ignore"),
+            )
+            if not (target / part["check"]).is_file():
+                raise RuntimeError(f"{part['repo']} finished but {part['check']} is missing")
+            (target / _DL_MARKER).unlink(missing_ok=True)
+            done_bytes += part_total
+            state["done_bytes"] = done_bytes
+            state["current"] = None
+        state["status"] = "done"
+        print(f"[models] {key} ready", flush=True)
+        if key == "inst_lora" and _engine is not None and not getattr(_engine, "has_inst_lora", False):
+            # The LoRA is attached at engine load; reload now if idle, else before the next job.
+            if _gpu_lock.acquire(blocking=False):
+                try:
+                    _release_engine()
+                finally:
+                    _gpu_lock.release()
+            else:
+                _engine_needs_reload = True
+    except Exception as exc:
+        traceback.print_exc()
+        state["status"] = "error"
+        state["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    finally:
+        state["current"] = None
+        state["finished_at"] = time.time()
+        _broadcast("models_changed", {"key": key, "status": state["status"]})
+
+
+def _models_status() -> dict:
+    out = {}
+    venv_ok = FLAMINGO_PY.is_file()
+    for key, spec in MODEL_SPECS.items():
+        dl = _downloads.get(key) or {}
+        done = int(dl.get("done_bytes") or 0)
+        cur = dl.get("current")
+        if dl.get("status") == "running" and cur:
+            grown = max(0, _dir_bytes(Path(cur["dir"])) - cur["start_bytes"])
+            done = cur["base"] + min(grown, cur["total"])
+        total = int(dl.get("total_bytes") or 0)
+        out[key] = {
+            "label": spec["label"],
+            "feature": spec["feature"],
+            "license": spec["license"],
+            "repos": [p["repo"] for p in spec["parts"]],
+            "present": _model_files_present(key),
+            "ready": _model_ready(key),
+            "needs_flamingo_venv": spec["needs_flamingo_venv"],
+            "venv_ok": venv_ok or not spec["needs_flamingo_venv"],
+            "partial": any((BASE_DIR / p["dir"] / _DL_MARKER).exists() for p in spec["parts"]),
+            "download": {
+                "status": dl.get("status") or "idle",
+                "done_bytes": min(done, total) if total else done,
+                "total_bytes": total,
+                "error": dl.get("error"),
+            },
+        }
+    return out
+
+
+@app.get("/api/models")
+def list_models():
+    return {"models": _models_status(), "models_dir": os.environ.get("YUE2_MODELS_DIR") or str(BASE_DIR)}
+
+
+@app.post("/api/models/{key}/download")
+def download_model(key: str):
+    if key not in MODEL_SPECS:
+        raise HTTPException(404, f"Unknown model '{key}'")
+    with _downloads_lock:
+        cur = _downloads.get(key)
+        if cur and cur.get("status") == "running":
+            return {"started": False, "status": "running"}
+        if _model_files_present(key):
+            return {"started": False, "status": "present"}
+        _downloads[key] = {"status": "running", "done_bytes": 0, "total_bytes": 0, "error": None,
+                           "current": None, "started_at": time.time()}
+        threading.Thread(target=_download_worker, args=(key,), daemon=True, name=f"dl-{key}").start()
+    _broadcast("models_changed", {"key": key, "status": "running"})
+    return {"started": True, "status": "running"}
+
+
 @app.get("/api/health")
 def health():
     import torch
@@ -1989,10 +2213,10 @@ def health():
         "gpu": "AMD Radeon PRO V620 (gfx1030, 32GB)",
         "vram_gb": round(torch.cuda.memory_allocated() / 1e9, 2) if torch.cuda.is_available() else 0,
         "busy": _gpu_lock.locked(),
-        "inst_lora_available": (BASE_DIR / "YuE2-Inst-LoRA" / "ar_lora_inst_v3abc.bf16.safetensors").is_file(),
-        "music_flamingo_available": (BASE_DIR / "music-flamingo-2601-hf").exists() and (BASE_DIR / ".venv-flamingo" / "bin" / "python").is_file(),
-        "sheetsage2_available": (BASE_DIR / "SheetSage2").exists() and (BASE_DIR / "MERT-v2-FullSong").exists(),
-        "parakeet_available": (BASE_DIR / "parakeet-tdt-0.6b-v3").exists() and (BASE_DIR / ".venv-flamingo" / "bin" / "python").is_file(),
+        "inst_lora_available": _model_ready("inst_lora"),
+        "music_flamingo_available": _model_ready("music_flamingo"),
+        "sheetsage2_available": _model_ready("sheetsage2"),
+        "parakeet_available": _model_ready("parakeet"),
     }
 
 
@@ -2197,17 +2421,13 @@ async def analyze_audio_upload(
         raise HTTPException(400, "mode must be style, cover, or full")
     max_seconds = max(15, min(360, int(max_seconds)))
 
-    flamingo_py = BASE_DIR / ".venv-flamingo" / "bin" / "python"
-    if mode in ("style", "full") and (
-        not (BASE_DIR / "music-flamingo-2601-hf").exists() or not flamingo_py.is_file()
-    ):
+    flamingo_py = FLAMINGO_PY
+    if mode in ("style", "full") and not _model_ready("music_flamingo"):
         raise HTTPException(503, "Music Flamingo model or .venv-flamingo is not available on this host")
     if mode in ("cover", "full"):
-        if not (BASE_DIR / "SheetSage2").exists() or not (BASE_DIR / "MERT-v2-FullSong").exists():
+        if not _model_ready("sheetsage2"):
             raise HTTPException(503, "SheetSage2 or MERT-v2-FullSong is not available on this host")
-        if not skip_lyrics and (
-            not (BASE_DIR / "parakeet-tdt-0.6b-v3").exists() or not flamingo_py.is_file()
-        ):
+        if not skip_lyrics and not _model_ready("parakeet"):
             raise HTTPException(503, "Parakeet V3 0.6B or .venv-flamingo is not available on this host")
 
     orig_name = Path(file.filename or "upload.mp3").name
