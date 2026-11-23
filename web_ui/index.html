@@ -529,6 +529,92 @@
     background: var(--accent-soft);
     color: var(--accent);
   }
+  .src-badge.inst {
+    background: rgba(52, 211, 153, 0.14);
+    color: #34d399;
+  }
+  .inst-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    font-size: 0.71rem;
+  }
+  .inst-toggle.active {
+    background: var(--accent-soft);
+    border-color: rgba(245, 158, 11, 0.65);
+    color: var(--accent);
+  }
+  .lora-tag {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(52, 211, 153, 0.16);
+    color: #34d399;
+  }
+  .dropzone {
+    border: 1.5px dashed var(--hairline-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    padding: 18px 14px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(245, 158, 11, 0.06);
+  }
+  .dropzone-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--ink-primary);
+  }
+  .dropzone-sub {
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+    margin-top: 4px;
+  }
+  .analysis-card {
+    background: var(--bg-input);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-top: 12px;
+  }
+  .analysis-prog-track {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--bg-hover);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .analysis-prog-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.35s ease;
+  }
+  .meta-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .meta-chip {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline-strong);
+    color: var(--ink-secondary);
+    background: var(--bg-raised);
+  }
+  .meta-chip.ok {
+    border-color: rgba(52, 211, 153, 0.4);
+    color: #34d399;
+  }
   .sleeve svg { display: block; width: 100%; height: 100%; }
   .sleeve-overlay {
     position: absolute;
@@ -1186,12 +1272,19 @@
       <div class="segmented" role="group" aria-label="Composer mode" style="margin-bottom:12px">
         <button type="button" class="seg active" id="modeManualBtn" data-val="manual" onclick="setComposerMode('manual')">Manual</button>
         <button type="button" class="seg" id="modeDescribeBtn" data-val="describe" onclick="setComposerMode('describe')">✨ Describe</button>
+        <button type="button" class="seg" id="modeAudioBtn" data-val="audio" onclick="setComposerMode('audio')">🎵 From Audio</button>
       </div>
 
       <div id="describePane" style="display:none">
         <div class="field">
           <div class="field-row"><label class="field-label" for="composePrompt">Describe your song — AI fills the form</label></div>
           <textarea id="composePrompt" rows="5" placeholder="e.g. a sad late-night lo-fi song about rain on the window, breathy female vocal"></textarea>
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--ink-secondary);cursor:pointer;user-select:none">
+            <input id="describeInst" type="checkbox" style="width:auto;accent-color:var(--accent)" />
+            Instrumental (no vocals)
+          </label>
         </div>
         <div class="field">
           <div style="display:flex;gap:6px">
@@ -1201,6 +1294,48 @@
         </div>
         <div id="composeOut" style="font-family:var(--font-mono);font-size:0.74rem;color:var(--ink-secondary);margin-top:6px;white-space:pre-wrap"></div>
         <div id="composeStatusInline" style="font-size:0.74rem;color:var(--ink-muted);margin-top:4px">Uses your LLM provider (OpenCode Go recommended). Result fills the Manual form.</div>
+      </div>
+
+      <div id="audioPane" style="display:none">
+        <div class="field">
+          <div class="field-row">
+            <label class="field-label">Upload an existing track (MP3, WAV, FLAC, M4A, OGG)</label>
+            <span id="audioCapsHint" style="font-size:0.69rem;color:var(--ink-muted)">Local GPU</span>
+          </div>
+          <input id="audioFileInput" type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus,.webm" style="display:none" onchange="onAudioFilePicked(this.files && this.files[0])" />
+          <div class="dropzone" id="audioDropzone" onclick="document.getElementById('audioFileInput').click()" ondragover="onAudioDrag(event,true)" ondragleave="onAudioDrag(event,false)" ondrop="onAudioDrop(event)">
+            <div class="dropzone-title" id="audioDropTitle">Drop an audio file here, or click to browse</div>
+            <div class="dropzone-sub" id="audioDropSub">Up to 50 MB &middot; runs locally on V620</div>
+          </div>
+          <audio id="audioPreview" controls style="display:none;width:100%;margin-top:8px;height:34px"></audio>
+        </div>
+
+        <div class="field" style="margin-bottom:10px;display:flex;flex-direction:column;gap:6px">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.76rem;color:var(--ink-secondary);cursor:pointer;user-select:none">
+            <input id="audioKeepChords" type="checkbox" style="width:auto;accent-color:var(--accent)" />
+            Keep original chords for covers (unchecked = melody-only, freer style flip)
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.76rem;color:var(--ink-secondary);cursor:pointer;user-select:none">
+            <input id="audioSkipLyrics" type="checkbox" style="width:auto;accent-color:var(--accent)" />
+            Instrumental cover (skip vocal lyrics)
+          </label>
+        </div>
+
+        <div class="field" style="display:flex;flex-direction:column;gap:7px">
+          <button type="button" class="btn-secondary" id="analyzeStyleBtn" onclick="startAudioAnalysis('style')" style="margin-top:0">✨ Derive Style Prompt</button>
+          <button type="button" class="btn-secondary" id="analyzeCoverBtn" onclick="startAudioAnalysis('cover')" style="margin-top:0">🎸 Cover in New Style (Score + Lyrics)</button>
+          <button type="button" class="btn-create" id="analyzeFullBtn" onclick="startAudioAnalysis('full')" style="height:38px;font-size:0.84rem">⚡ Full Extract (Style + Cover)</button>
+        </div>
+
+        <div id="audioProgressBox" class="analysis-card" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.76rem">
+            <span id="audioProgDetail" style="color:var(--ink-primary);font-weight:600">Starting...</span>
+            <span id="audioProgClock" style="font-family:var(--font-mono);color:var(--accent)">0.0s</span>
+          </div>
+          <div class="analysis-prog-track"><div class="analysis-prog-fill" id="audioProgBar" style="width:5%"></div></div>
+        </div>
+
+        <div id="audioResultBox" class="analysis-card" style="display:none"></div>
       </div>
 
       <div id="manualPane">
@@ -1224,8 +1359,14 @@
 
       <div class="field">
         <div class="field-row">
-          <label class="field-label" for="lyrics">Lyrics</label>
-          <button type="button" class="text-action" onclick="fillSample()">Insert example</button>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label class="field-label" for="lyrics" id="lyricsLabel">Lyrics</label>
+            <button type="button" class="pill inst-toggle" id="instToggleBtn" onclick="toggleInstrumental()" aria-pressed="false" title="Toggle pure instrumental generation (no lyrics required)">
+              <span>Instrumental</span>
+              <span class="lora-tag" id="instLoraBadge" style="display:none">LoRA</span>
+            </button>
+          </div>
+          <button type="button" class="text-action" id="insertExampleBtn" onclick="fillSample()">Insert example</button>
         </div>
         <textarea id="lyrics" rows="7" oninput="clearFieldError('lyrics')" placeholder="[Verse 1]&#10;Write lyrics or leave instrumental...">[Verse 1]
 Neon lights flicker on the midnight street
@@ -1238,7 +1379,7 @@ We are electric in the pouring rain
 Dancing through the fire, breaking every chain
 Hold onto the rhythm, never let it fade
 Living for the music that our hands have made</textarea>
-        <div class="pill-row">
+        <div class="pill-row" id="lyricsPills">
           <button type="button" class="pill" onclick="addSection('[Verse]')">+ Verse</button>
           <button type="button" class="pill" onclick="addSection('[Chorus]')">+ Chorus</button>
           <button type="button" class="pill" onclick="addSection('[Bridge]')">+ Bridge</button>
@@ -1251,7 +1392,7 @@ Living for the music that our hands have made</textarea>
           <label class="field-label" for="style">Style &amp; Instrumentation</label>
         </div>
         <textarea id="style" rows="3" oninput="clearFieldError('style')" placeholder="Genre, vocal tone, instruments, tempo...">Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM</textarea>
-        <div class="pill-row">
+        <div class="pill-row" id="stylePills">
           <button type="button" class="pill" onclick="setStyle('Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM')">Synth-Pop</button>
           <button type="button" class="pill" onclick="setStyle('Jazz-funk, warm soulful lead vocal, Rhodes electric piano, slap bass, crisp horn section, tight groove')">Jazz-Funk</button>
           <button type="button" class="pill" onclick="setStyle('Cyber metal, distorted seven-string guitars, soaring vocal, double-kick drums, industrial synths, 145 BPM')">Cyber Metal</button>
@@ -1263,6 +1404,7 @@ Living for the music that our hands have made</textarea>
       <div class="field">
         <div class="field-row">
           <label class="field-label">Arrangement</label>
+          <span id="cotHint" style="font-size:0.69rem;color:var(--accent)"></span>
         </div>
         <div class="segmented" id="cotCtrl" role="group" aria-label="Arrangement mode">
           <button type="button" class="seg active" data-val="full" onclick="setCot('full')">Chords + Melody</button>
@@ -1338,7 +1480,7 @@ Living for the music that our hands have made</textarea>
       </div><!-- /manualPane -->
     </div>
 
-    <div class="composer-foot">
+    <div class="composer-foot" id="composerFoot">
       <div class="create-error" id="createError" role="alert" aria-live="polite"></div>
       <button type="button" class="btn-create" id="createBtn" onclick="startGenerate()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
@@ -1602,6 +1744,16 @@ let composerMode = 'manual';
 let currentIdx = -1;
 let selectedIdx = -1;
 let cotMode = 'full';
+let isInstrumental = false;
+let stashedVocalLyrics = '';
+let studioCapabilities = {};
+let pickedAudioFile = null;
+let pickedAudioUrl = null;
+let activeAnalysisId = null;
+let currentAnalysisResult = null;
+let coverUseFullChords = false;
+let analysisClockTimer = null;
+let analysisPollTimer = null;
 let pollTimer = null;
 
 // WebAudio live spectrum visualizer
@@ -1722,6 +1874,91 @@ function setOde(steps, method) {
 function setCot(val) {
   cotMode = val;
   document.querySelectorAll('#cotCtrl .seg').forEach(b => b.classList.toggle('active', b.dataset.val === val));
+  const hint = document.getElementById('cotHint');
+  if (hint) {
+    hint.textContent = (isInstrumental && studioCapabilities.inst_lora_available)
+      ? (val === 'full' ? 'Instrumental LoRA · Chords + Melody recommended' : 'Instrumental LoRA active')
+      : '';
+  }
+}
+const VOCAL_LYRICS_PILLS = `
+  <button type="button" class="pill" onclick="addSection('[Verse]')">+ Verse</button>
+  <button type="button" class="pill" onclick="addSection('[Chorus]')">+ Chorus</button>
+  <button type="button" class="pill" onclick="addSection('[Bridge]')">+ Bridge</button>
+  <button type="button" class="pill" onclick="addSection('[Outro]')">+ Outro</button>
+`;
+const INST_LYRICS_PILLS = `
+  <button type="button" class="pill" onclick="addSection('[intro]')">+ intro</button>
+  <button type="button" class="pill" onclick="addSection('[verse]')">+ verse</button>
+  <button type="button" class="pill" onclick="addSection('[pre-chorus]')">+ pre-chorus</button>
+  <button type="button" class="pill" onclick="addSection('[chorus]')">+ chorus</button>
+  <button type="button" class="pill" onclick="addSection('[bridge]')">+ bridge</button>
+  <button type="button" class="pill" onclick="addSection('[outro]')">+ outro</button>
+  <button type="button" class="pill" onclick="clearLyricsAuto()">Clear (auto)</button>
+`;
+const VOCAL_STYLE_PILLS = `
+  <button type="button" class="pill" onclick="setStyle('Upbeat synth-pop, energetic female vocal, shimmering analog synths, punchy drum machine, driving bassline, 120 BPM')">Synth-Pop</button>
+  <button type="button" class="pill" onclick="setStyle('Jazz-funk, warm soulful lead vocal, Rhodes electric piano, slap bass, crisp horn section, tight groove')">Jazz-Funk</button>
+  <button type="button" class="pill" onclick="setStyle('Cyber metal, distorted seven-string guitars, soaring vocal, double-kick drums, industrial synths, 145 BPM')">Cyber Metal</button>
+  <button type="button" class="pill" onclick="setStyle('Warm indie folk ballad, intimate male vocal, fingerpicked acoustic guitar, subtle cello, soft brushed snare')">Indie Folk</button>
+  <button type="button" class="pill" onclick="setStyle('Late-night lo-fi soul, breathy vocal, dusty vinyl Rhodes, mellow bass, laid-back swing drums, 86 BPM')">Lo-Fi Soul</button>
+`;
+const INST_STYLE_PILLS = `
+  <button type="button" class="pill" onclick="setStyle('Cinematic ambient, lush orchestral strings, warm analog synth pads, deep sub bass, atmospheric piano, 82 BPM, instrumental, no vocals')">Cinematic Ambient</button>
+  <button type="button" class="pill" onclick="setStyle('Lo-fi chillhop beats, dusty Rhodes electric piano, warm vinyl crackle, mellow upright bass, boom-bap drums, 85 BPM, instrumental, no vocals')">Lo-Fi Beats</button>
+  <button type="button" class="pill" onclick="setStyle('Retrowave synthwave, shimmering arpeggiated analog synths, punchy gated snare, driving synth bass, 118 BPM, instrumental, no vocals')">Synthwave</button>
+  <button type="button" class="pill" onclick="setStyle('Intimate fingerpicked acoustic guitar solo, warm wooden resonance, gentle cello accompaniment, 92 BPM, instrumental, no vocals')">Acoustic Guitar</button>
+  <button type="button" class="pill" onclick="setStyle('Late-night jazz trio, smoky tenor saxophone lead, brushed snare, walking upright bass, Rhodes chords, 96 BPM, instrumental, no vocals')">Jazz Trio</button>
+`;
+function clearLyricsAuto() {
+  const el = document.getElementById('lyrics');
+  if (el) { el.value = ''; clearFieldError('lyrics'); el.focus(); }
+}
+function toggleInstrumental(forceVal) {
+  const prev = isInstrumental;
+  const next = forceVal === undefined ? !isInstrumental : Boolean(forceVal);
+  isInstrumental = next;
+  const lyricsEl = document.getElementById('lyrics');
+  const btn = document.getElementById('instToggleBtn');
+  const lbl = document.getElementById('lyricsLabel');
+  const exBtn = document.getElementById('insertExampleBtn');
+  const lPills = document.getElementById('lyricsPills');
+  const sPills = document.getElementById('stylePills');
+
+  if (next && !prev && lyricsEl) {
+    const cur = lyricsEl.value.trim();
+    if (cur && cur !== '[instrumental]') {
+      stashedVocalLyrics = lyricsEl.value;
+    }
+    const keptTags = cur.split(/\r?\n/).map(x => x.trim()).filter(x => /^\[(intro|verse|pre-chorus|chorus|bridge|outro)(?:\s+\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})?\]$/i.test(x)).map(x => x.toLowerCase());
+    lyricsEl.value = keptTags.length ? keptTags.join('\n') : '';
+  } else if (!next && prev && lyricsEl) {
+    if (!lyricsEl.value.trim() && stashedVocalLyrics) {
+      lyricsEl.value = stashedVocalLyrics;
+    }
+  }
+
+  if (btn) {
+    btn.classList.toggle('active', next);
+    btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+  }
+  if (lbl) lbl.textContent = next ? 'Structure (optional — auto if blank)' : 'Lyrics';
+  if (lyricsEl) {
+    lyricsEl.rows = next ? 4 : 7;
+    lyricsEl.placeholder = next
+      ? '[instrumental]\n\nOptional section plan (one per line):\n[intro]\n[verse]\n[chorus]\n[bridge]\n[outro]'
+      : '[Verse 1]\nWrite lyrics or leave instrumental...';
+  }
+  if (exBtn) exBtn.style.display = next ? 'none' : '';
+  if (lPills) lPills.innerHTML = next ? INST_LYRICS_PILLS : VOCAL_LYRICS_PILLS;
+  if (sPills) sPills.innerHTML = next ? INST_STYLE_PILLS : VOCAL_STYLE_PILLS;
+  clearFieldError('lyrics');
+
+  if (next && !prev && cotMode === 'off') {
+    setCot('full');
+  } else {
+    setCot(cotMode);
+  }
 }
 function setStyle(s) {
   document.getElementById('style').value = s;
@@ -1795,10 +2032,22 @@ Living for the music that our hands have made`;
 async function fetchHealth() {
   try {
     const r = await (await fetch('/api/health')).json();
+    studioCapabilities = r || {};
     const html = `<span class="hw-dot"></span><span>V620 &middot; ${r.vram_gb}G</span>`;
     document.getElementById('hwStatus').innerHTML = html;
     const mobile = document.getElementById('hwStatusMobile');
     if (mobile) mobile.innerHTML = html;
+    const loraBadge = document.getElementById('instLoraBadge');
+    if (loraBadge) loraBadge.style.display = r.inst_lora_available ? 'inline-block' : 'none';
+    const audioHint = document.getElementById('audioCapsHint');
+    if (audioHint) {
+      const parts = [];
+      if (r.music_flamingo_available) parts.push('Flamingo');
+      if (r.sheetsage2_available) parts.push('SheetSage2');
+      if (r.parakeet_available) parts.push('Parakeet V3');
+      audioHint.textContent = parts.length ? parts.join(' + ') : 'Models missing';
+    }
+    setCot(cotMode);
   } catch {}
 }
 
@@ -1927,13 +2176,244 @@ function setComposerMode(mode) {
   composerMode = mode;
   document.getElementById('modeManualBtn').classList.toggle('active', mode === 'manual');
   document.getElementById('modeDescribeBtn').classList.toggle('active', mode === 'describe');
+  const audioBtn = document.getElementById('modeAudioBtn');
+  if (audioBtn) audioBtn.classList.toggle('active', mode === 'audio');
   document.getElementById('manualPane').style.display = mode === 'manual' ? '' : 'none';
   document.getElementById('describePane').style.display = mode === 'describe' ? '' : 'none';
+  const audioPane = document.getElementById('audioPane');
+  if (audioPane) audioPane.style.display = mode === 'audio' ? '' : 'none';
+  const foot = document.getElementById('composerFoot');
+  if (foot) foot.style.display = mode === 'audio' ? 'none' : '';
   if (mode === 'describe') setTimeout(() => document.getElementById('composePrompt').focus(), 50);
 }
 // Back-compat for old buttons/keys.
 function openCompose() { setComposerMode('describe'); }
 function closeCompose() { setComposerMode('manual'); }
+
+function onAudioDrag(e, over) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = document.getElementById('audioDropzone');
+  if (dz) dz.classList.toggle('dragover', over);
+}
+function onAudioDrop(e) {
+  onAudioDrag(e, false);
+  const f = e.dataTransfer?.files?.[0];
+  if (f) onAudioFilePicked(f);
+}
+function onAudioFilePicked(file) {
+  if (!file) return;
+  pickedAudioFile = file;
+  if (pickedAudioUrl) { URL.revokeObjectURL(pickedAudioUrl); pickedAudioUrl = null; }
+  pickedAudioUrl = URL.createObjectURL(file);
+  const mb = (file.size / (1024 * 1024)).toFixed(1);
+  document.getElementById('audioDropTitle').textContent = file.name;
+  document.getElementById('audioDropSub').textContent = `${mb} MB · Ready to analyze locally`;
+  const prev = document.getElementById('audioPreview');
+  prev.src = pickedAudioUrl;
+  prev.style.display = 'block';
+  document.getElementById('audioResultBox').style.display = 'none';
+  currentAnalysisResult = null;
+}
+function setAnalysisBusy(busy) {
+  ['analyzeStyleBtn', 'analyzeCoverBtn', 'analyzeFullBtn'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = busy;
+  });
+}
+function stopAnalysisTimers() {
+  if (analysisClockTimer) { clearInterval(analysisClockTimer); analysisClockTimer = null; }
+  if (analysisPollTimer) { clearInterval(analysisPollTimer); analysisPollTimer = null; }
+}
+async function startAudioAnalysis(mode) {
+  const box = document.getElementById('audioProgressBox');
+  const resBox = document.getElementById('audioResultBox');
+  if (!pickedAudioFile) {
+    box.style.display = 'block';
+    document.getElementById('audioProgDetail').textContent = 'Pick or drop an audio file first.';
+    document.getElementById('audioProgBar').style.width = '0%';
+    return;
+  }
+  setAnalysisBusy(true);
+  resBox.style.display = 'none';
+  box.style.display = 'block';
+  document.getElementById('audioProgDetail').textContent = 'Uploading audio...';
+  document.getElementById('audioProgBar').style.width = '4%';
+  const clientStart = Date.now();
+  document.getElementById('audioProgClock').textContent = '0.0s';
+  stopAnalysisTimers();
+  analysisClockTimer = setInterval(() => {
+    const el = document.getElementById('audioProgClock');
+    if (el) el.textContent = `${((Date.now() - clientStart) / 1000).toFixed(1)}s`;
+  }, 200);
+
+  try {
+    const fd = new FormData();
+    fd.append('file', pickedAudioFile);
+    fd.append('mode', mode);
+    fd.append('skip_lyrics', document.getElementById('audioSkipLyrics').checked ? 'true' : 'false');
+    const r = await fetch('/api/analyze-audio', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `Upload failed (${r.status})`);
+    activeAnalysisId = data.analysis_id;
+    coverUseFullChords = document.getElementById('audioKeepChords').checked;
+    // Fallback poll in case SSE disconnects during long load
+    analysisPollTimer = setInterval(async () => {
+      if (!activeAnalysisId) return;
+      try {
+        const pr = await fetch(`/api/analyze-audio/${activeAnalysisId}`);
+        if (pr.ok) handleAnalysisUpdate(await pr.json());
+      } catch {}
+    }, 1500);
+  } catch (e) {
+    stopAnalysisTimers();
+    setAnalysisBusy(false);
+    document.getElementById('audioProgDetail').textContent = `Error: ${e.message}`;
+  }
+}
+function handleAnalysisUpdate(a) {
+  if (!a || (activeAnalysisId && a.analysis_id !== activeAnalysisId)) return;
+  const box = document.getElementById('audioProgressBox');
+  if (box) box.style.display = 'block';
+  const det = document.getElementById('audioProgDetail');
+  const bar = document.getElementById('audioProgBar');
+  if (det) det.textContent = a.status === 'error' ? `Error: ${a.error || 'Analysis failed'}` : (a.detail || a.stage || 'Working...');
+  if (bar) bar.style.width = `${Math.max(4, a.progress || 5)}%`;
+  if (a.status === 'done') {
+    stopAnalysisTimers();
+    setAnalysisBusy(false);
+    if (box) box.style.display = 'none';
+    currentAnalysisResult = a.result || null;
+    if (currentAnalysisResult) renderAudioResult(currentAnalysisResult);
+  } else if (a.status === 'error') {
+    stopAnalysisTimers();
+    setAnalysisBusy(false);
+  }
+}
+function renderAudioResult(res) {
+  const box = document.getElementById('audioResultBox');
+  if (!box) return;
+  const hasAbc = Boolean(res.abc || res.abc_melody);
+  const instChecked = Boolean(res.instrumental);
+  const chips = [
+    res.bpm ? `<span class="meta-chip">${res.bpm} BPM</span>` : '',
+    res.key ? `<span class="meta-chip">${esc(res.key)}</span>` : '',
+    res.duration_seconds ? `<span class="meta-chip">${fmtTime(res.duration_seconds)}</span>` : '',
+    `<span class="meta-chip ${instChecked ? 'ok' : ''}">${instChecked ? 'Instrumental' : 'Vocals'}</span>`,
+    hasAbc ? `<span class="meta-chip ok">ABC Score Ready</span>` : '',
+  ].filter(Boolean).join('');
+  const warnHtml = (res.warnings && res.warnings.length)
+    ? `<div style="font-size:0.71rem;color:var(--accent);margin-bottom:8px">${esc(res.warnings.join(' · '))}</div>`
+    : '';
+  const styleBlock = res.style ? `
+    <div style="margin-bottom:10px">
+      <div class="field-row"><label class="field-label" for="extractedStyle">Derived YuE2 Style Prompt</label></div>
+      <textarea id="extractedStyle" rows="3" style="font-size:0.8rem">${esc(res.style)}</textarea>
+      ${res.description && res.description !== res.style ? `<div style="font-size:0.74rem;color:var(--ink-secondary);line-height:1.45;margin-top:6px">${esc(res.description)}</div>` : ''}
+      <button type="button" class="btn-secondary" onclick="applyExtractedStyle()">Use Style in Composer</button>
+    </div>` : '';
+  const coverLyricsVal = instChecked ? (res.instrumental_structure || '[instrumental]') : (res.lyrics || '');
+  const activeAbc = (coverUseFullChords ? res.abc : (res.abc_melody || res.abc)) || '';
+  const abcLines = activeAbc ? activeAbc.split(/\r?\n/).length : 0;
+  const coverBlock = hasAbc || res.lyrics ? `
+    <div style="${styleBlock ? 'border-top:1px solid var(--hairline);padding-top:10px;margin-top:6px' : ''}">
+      <div class="field-row"><label class="field-label" for="coverTargetStyle">Target Style for Cover</label></div>
+      <input id="coverTargetStyle" type="text" oninput="this.classList.remove('field-error')" placeholder="e.g. 1950s doo-wop soul, warm brass, upright bass, 95 BPM" />
+      <div class="pill-row" style="margin-bottom:10px">
+        <button type="button" class="pill" onclick="setCoverStyle('Cyber metal, distorted seven-string guitars, soaring vocal, double-kick drums, 145 BPM')">Cyber Metal</button>
+        <button type="button" class="pill" onclick="setCoverStyle('Late-night lo-fi neo-soul jazz, warm Rhodes, upright bass, brushed snare, 86 BPM')">Lo-Fi Jazz</button>
+        <button type="button" class="pill" onclick="setCoverStyle('Upbeat 80s synth-pop, shimmering analog synths, punchy LinnDrum, driving bassline, 120 BPM')">80s Synth-Pop</button>
+        <button type="button" class="pill" onclick="setCoverStyle('Warm acoustic indie folk ballad, fingerpicked guitar, cello, soft vocal, 94 BPM')">Indie Folk</button>
+        <button type="button" class="pill" onclick="setCoverStyle('Cinematic orchestral epic, sweeping strings, French horns, timpani, dramatic choir')">Orchestral</button>
+      </div>
+      ${hasAbc ? `
+      <div class="field-row"><label class="field-label">Cover Score Mode</label><span id="coverAbcCount" style="font-family:var(--font-mono);font-size:0.69rem;color:var(--ink-muted)">${abcLines} ABC lines</span></div>
+      <div class="segmented" style="margin-bottom:10px">
+        <button type="button" class="seg ${!coverUseFullChords ? 'active' : ''}" id="coverModeMelBtn" onclick="setCoverChordMode(false)">Melody only (freer)</button>
+        <button type="button" class="seg ${coverUseFullChords ? 'active' : ''}" id="coverModeFullBtn" onclick="setCoverChordMode(true)">Chords + Melody</button>
+      </div>` : ''}
+      <div class="field-row">
+        <label class="field-label" for="extractedLyrics">${instChecked ? 'Extracted Structure' : 'Extracted Lyrics (editable)'}</label>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:0.71rem;color:var(--ink-secondary);cursor:pointer">
+          <input id="coverResInst" type="checkbox" ${instChecked ? 'checked' : ''} style="width:auto;accent-color:var(--accent)" onchange="onCoverInstToggle()" />
+          Instrumental
+        </label>
+      </div>
+      <textarea id="extractedLyrics" rows="4" style="font-size:0.78rem">${esc(coverLyricsVal)}</textarea>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button type="button" class="btn-secondary" onclick="openCoverInManual()" style="margin-top:0;flex:1">Open in Manual</button>
+        <button type="button" class="btn-create" onclick="createCoverNow()" style="height:38px;font-size:0.83rem;flex:1">Create Cover Now</button>
+      </div>
+    </div>` : '';
+
+  box.innerHTML = `<div class="meta-chips">${chips}</div>${warnHtml}${styleBlock}${coverBlock}`;
+  box.style.display = 'block';
+}
+function setCoverStyle(s) {
+  const el = document.getElementById('coverTargetStyle');
+  if (el) { el.value = s; el.focus(); }
+}
+function setCoverChordMode(useFull) {
+  coverUseFullChords = Boolean(useFull);
+  document.getElementById('coverModeMelBtn')?.classList.toggle('active', !coverUseFullChords);
+  document.getElementById('coverModeFullBtn')?.classList.toggle('active', coverUseFullChords);
+  const abc = (coverUseFullChords ? currentAnalysisResult?.abc : (currentAnalysisResult?.abc_melody || currentAnalysisResult?.abc)) || '';
+  const cnt = document.getElementById('coverAbcCount');
+  if (cnt) cnt.textContent = `${abc ? abc.split(/\r?\n/).length : 0} ABC lines`;
+}
+function onCoverInstToggle() {
+  const inst = Boolean(document.getElementById('coverResInst')?.checked);
+  const ta = document.getElementById('extractedLyrics');
+  if (!ta || !currentAnalysisResult) return;
+  ta.value = inst ? (currentAnalysisResult.instrumental_structure || '[instrumental]') : (currentAnalysisResult.lyrics || '');
+}
+function applyExtractedStyle() {
+  if (!currentAnalysisResult) return;
+  const styleTxt = (document.getElementById('extractedStyle')?.value || currentAnalysisResult.style || '').trim();
+  const inst = Boolean(currentAnalysisResult.instrumental);
+  toggleInstrumental(inst);
+  if (styleTxt) { document.getElementById('style').value = styleTxt; clearFieldError('style'); }
+  if (currentAnalysisResult.title && !document.getElementById('title').value.trim()) {
+    document.getElementById('title').value = currentAnalysisResult.title;
+  }
+  setComposerMode('manual');
+  document.getElementById('style').focus();
+}
+function openCoverInManual() {
+  if (!currentAnalysisResult) return;
+  const inst = Boolean(document.getElementById('coverResInst')?.checked);
+  const lyr = (document.getElementById('extractedLyrics')?.value || '').trim();
+  const newStyle = (document.getElementById('coverTargetStyle')?.value || '').trim();
+  const abc = (coverUseFullChords ? currentAnalysisResult.abc : (currentAnalysisResult.abc_melody || currentAnalysisResult.abc)) || '';
+  toggleInstrumental(inst);
+  document.getElementById('lyrics').value = lyr;
+  clearFieldError('lyrics');
+  document.getElementById('abcInput').value = abc;
+  if (abc) document.getElementById('abcDetails').open = true;
+  setCot(coverUseFullChords ? 'full' : 'melody');
+  if (currentAnalysisResult.title) {
+    document.getElementById('title').value = `${currentAnalysisResult.title} (Cover)`;
+  }
+  if (newStyle) {
+    document.getElementById('style').value = newStyle;
+    clearFieldError('style');
+  } else {
+    document.getElementById('style').value = '';
+  }
+  setComposerMode('manual');
+  document.getElementById('style').focus();
+}
+async function createCoverNow() {
+  if (!currentAnalysisResult) return;
+  const targetStyle = (document.getElementById('coverTargetStyle')?.value || '').trim();
+  if (!targetStyle) {
+    const el = document.getElementById('coverTargetStyle');
+    if (el) { el.classList.add('field-error'); el.focus(); }
+    return;
+  }
+  openCoverInManual();
+  await startGenerate();
+}
 
 function renderWorkspaceBar() {
   const mine = userWorkspaces();
@@ -2021,6 +2501,7 @@ async function moveSong(songId, folderId) {
 
 async function runCompose(createAfter) {
   const prompt = (document.getElementById('composePrompt').value || '').trim();
+  const wantInst = Boolean(document.getElementById('describeInst')?.checked);
   const out = document.getElementById('composeOut');
   const st = document.getElementById('composeStatusInline');
   if (!prompt) { st.textContent = 'Describe your song first.'; return; }
@@ -2030,10 +2511,11 @@ async function runCompose(createAfter) {
   st.textContent = 'Asking your LLM (OpenCode Go sends x-opencode-session)...';
   out.textContent = '';
   try {
-    const r = await fetch('/api/compose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, session_id: composeSession }) });
+    const r = await fetch('/api/compose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, session_id: composeSession, instrumental: wantInst }) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Compose failed');
     if (data.session_id) composeSession = data.session_id;
+    toggleInstrumental(Boolean(data.instrumental));
     document.getElementById('title').value = data.title || '';
     document.getElementById('style').value = data.style || '';
     document.getElementById('lyrics').value = data.lyrics || '';
@@ -2062,6 +2544,7 @@ function renderGeneratingCard(job) {
   const isErr = job.status === 'error';
   const modeLabel = job.cot === 'full' ? 'Chords + Melody' : job.cot === 'melody' ? 'Melody' : 'Direct';
   const srcBadge = job.source === 'mcp' ? `<span class="src-badge">MCP</span>` : '';
+  const instBadge = job.instrumental ? `<span class="src-badge inst">Inst</span>` : '';
   const statusPill = isErr
     ? `<span class="gen-pill err">${job.gpu_reset ? 'GPU Reset' : 'Failed'}</span>`
     : `<span class="gen-pill">${job.status === 'queued' ? 'Queued' : 'Generating'}</span>`;
@@ -2087,7 +2570,7 @@ function renderGeneratingCard(job) {
         ${overlay}
       </div>
       <div class="t-meta">
-        <div class="t-title">${esc(titleText)} ${statusPill} ${srcBadge}</div>
+        <div class="t-title">${esc(titleText)} ${statusPill} ${srcBadge} ${instBadge}</div>
         <div class="t-style">${esc(job.style || '')}</div>
         <div class="t-sub">
           <span class="hi">${esc(detailText)}</span>
@@ -2139,6 +2622,7 @@ function renderSongs() {
     const rt = (s.audio_seconds / Math.max(s.e2e_seconds, 0.1)).toFixed(1);
     const modeLabel = s.cot === 'full' ? 'Chords + Melody' : s.cot === 'melody' ? 'Melody' : 'Direct';
     const srcBadge = s.source === 'mcp' ? `<span class="src-badge">MCP</span>` : '';
+    const instBadge = s.instrumental ? `<span class="src-badge inst">Inst</span>` : '';
     return `
       <div class="track ${isSel ? 'selected' : ''} ${isPlaying ? 'playing' : ''} ${isNew ? 'just-added' : ''}" onclick="playIndex(${idx})">
         <div class="sleeve">
@@ -2146,7 +2630,7 @@ function renderSongs() {
           <div class="sleeve-overlay">${isPlaying ? ICON_PAUSE : ICON_PLAY}</div>
         </div>
         <div class="t-meta">
-          <div class="t-title">${esc(s.title)} ${srcBadge}</div>
+          <div class="t-title">${esc(s.title)} ${srcBadge} ${instBadge}</div>
           <div class="t-style">${esc(s.style)}</div>
           <div class="t-sub">
             <span class="hi">${fmtTime(s.audio_seconds)}</span>
@@ -2229,6 +2713,10 @@ function selectInspector(idx) {
         <span class="sheet-section-title">Remix in new style</span>
       </div>
       <input id="remixStyle-${s.id}" type="text" placeholder="e.g. Cyber metal, distorted guitars, 145 BPM..." onkeydown="if(event.key==='Enter'){event.preventDefault();remixSong('${s.id}')}" />
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.74rem;color:var(--ink-secondary);cursor:pointer;margin-top:8px">
+        <input id="remixInst-${s.id}" type="checkbox" ${s.instrumental ? 'checked' : ''} style="width:auto;accent-color:var(--accent)" />
+        Instrumental (no vocals)
+      </label>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button type="button" class="btn-secondary" onclick="remixSong('${s.id}')">Remix ${s.abc ? '(keep melody)' : '(same lyrics)'}</button>
         <button type="button" class="text-action" onclick="remixDraft(${idx})">Load as draft</button>
@@ -2266,6 +2754,7 @@ async function remixSong(songId) {
     return;
   }
   const src = songs.find(s => s.id === songId);
+  const inst = Boolean(document.getElementById(`remixInst-${songId}`)?.checked);
   if (msg) msg.textContent = 'Remixing... (keeps melody, re-renders in new style)';
   const steps = Math.max(1, Math.min(64, Number(document.getElementById('odeSteps').value) || 8));
   const r = await fetch(`/api/songs/${songId}/remix`, {
@@ -2277,6 +2766,7 @@ async function remixSong(songId) {
       ode_steps: steps,
       ode_method: document.getElementById('odeMethod').value,
       reuse_abc: Boolean(src?.abc),
+      instrumental: inst,
       user_id: activeUser || undefined,
       workspace_id: activeWorkspace || undefined,
     }),
@@ -2292,12 +2782,14 @@ async function remixSong(songId) {
 
 function remixDraft(idx) {
   const s = songs[idx];
+  toggleInstrumental(Boolean(s.instrumental));
   document.getElementById('title').value = `${s.title} (Remix)`;
   document.getElementById('lyrics').value = s.lyrics;
   document.getElementById('style').value = '';
   document.getElementById('abcInput').value = s.abc || '';
   document.getElementById('abcDetails').open = true;
   setCot(s.cot === 'off' ? 'full' : (s.cot || 'full'));
+  setComposerMode('manual');
   document.getElementById('style').focus();
   document.querySelector('.composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -2645,7 +3137,7 @@ async function startGenerate() {
   const styleVal = (styleEl?.value || '').trim();
 
   clearCreateError();
-  const missingLyrics = !lyricsVal;
+  const missingLyrics = !isInstrumental && !lyricsVal;
   const missingStyle = !styleVal;
   if (missingLyrics || missingStyle) {
     if (composerMode !== 'manual') setComposerMode('manual');
@@ -2681,6 +3173,7 @@ async function startGenerate() {
     abc: document.getElementById('abcInput').value || null,
     cover_prompt: document.getElementById('coverPrompt').value.trim() || null,
     generate_cover: document.getElementById('genCover').checked,
+    instrumental: isInstrumental,
     source: 'ui',
     user_id: activeUser,
     workspace_id: activeWorkspace,
@@ -2761,6 +3254,13 @@ function connectEventStream() {
     if (d.active_jobs && d.active_jobs.length) {
       d.active_jobs.forEach(showLiveJob);
     }
+    if (d.active_analyses && d.active_analyses.length) {
+      d.active_analyses.forEach(handleAnalysisUpdate);
+    }
+  });
+  es.addEventListener('analysis_update', (e) => {
+    const { analysis } = JSON.parse(e.data);
+    handleAnalysisUpdate(analysis);
   });
   es.addEventListener('job_update', (e) => {
     const { job } = JSON.parse(e.data);

@@ -1,5 +1,6 @@
 # Virtual environments & Python caches
 .venv/
+.venv-flamingo/
 __pycache__/
 *.pyc
 *.pyo
@@ -12,6 +13,16 @@ YuE2-3B
 YuE2-Vae
 YuE2-3B/
 YuE2-Vae/
+YuE2-Inst-LoRA
+YuE2-Inst-LoRA/
+SheetSage2
+SheetSage2/
+MERT-v2-FullSong
+MERT-v2-FullSong/
+parakeet-tdt-0.6b-v3
+parakeet-tdt-0.6b-v3/
+music-flamingo-2601-hf
+music-flamingo-2601-hf/
 *.safetensors
 *.whl
 _wheel_inspect/

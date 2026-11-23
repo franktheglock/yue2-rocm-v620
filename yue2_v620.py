@@ -390,6 +390,7 @@ class YuE2V620Engine:
         ar_quant: str = "w4",       # "w4" (fastest), "w8" (near-lossless), "fp16" (exact fp16)
         max_ar_seq: int = 16384,
         device: str = "cuda",
+        inst_lora_path: str | Path | None = None,
     ):
         assert ar_quant in ("w4", "w8", "fp16")
         root = Path(__file__).resolve().parent
@@ -399,6 +400,19 @@ class YuE2V620Engine:
         if vae_dir is None:
             env_v = os.environ.get("YUE2_VAE_DIR")
             vae_dir = env_v if env_v else (root / "YuE2-Vae" if (root / "YuE2-Vae").exists() else "m-a-p/YuE2-Vae")
+        if inst_lora_path is None:
+            env_lora = os.environ.get("YUE2_INST_LORA_PATH")
+            if env_lora:
+                inst_lora_path = Path(env_lora)
+            else:
+                cand = root / "YuE2-Inst-LoRA" / "ar_lora_inst_v3abc.bf16.safetensors"
+                inst_lora_path = cand if cand.is_file() else None
+        elif inst_lora_path == "":
+            inst_lora_path = None
+        else:
+            inst_lora_path = Path(inst_lora_path)
+        self.inst_lora_path: Optional[Path] = inst_lora_path
+        self.has_inst_lora: bool = False
         from yue2.storage import resolve_model
         self.model_dir = Path(resolve_model(model_dir))
         self.vae_dir = Path(resolve_model(vae_dir))
@@ -458,89 +472,123 @@ class YuE2V620Engine:
                 return (w_fp16.contiguous(), None)
 
         self.ar_layers = []
+        self.ar_layers_inst = [] if (self.inst_lora_path and self.inst_lora_path.is_file()) else None
         self.nar_layers = []
 
-        with safe_open(st_path, framework="pt", device="cpu") as f:
-            self.embed_tokens = f.get_tensor("model.embed_tokens.weight").to(device=dev, dtype=torch.float16).contiguous()
-            self.final_norm_w = f.get_tensor("model.norm.weight").to(device=dev, dtype=torch.float16).contiguous()
+        lora_ctx = safe_open(self.inst_lora_path, framework="pt", device="cpu") if self.ar_layers_inst is not None else None
+        lora_f = lora_ctx.__enter__() if lora_ctx is not None else None
+        try:
+            with safe_open(st_path, framework="pt", device="cpu") as f:
+                self.embed_tokens = f.get_tensor("model.embed_tokens.weight").to(device=dev, dtype=torch.float16).contiguous()
+                self.final_norm_w = f.get_tensor("model.norm.weight").to(device=dev, dtype=torch.float16).contiguous()
 
-            # Slice lm_head for ABC ([0..EOD-1, ABC_END]) and Semantic ([CODEC_OFFSET..+CODEC_SIZE, MUSIC_END])
-            lm_full = f.get_tensor("lm_head.weight")
-            abc_idx = list(range(EOD)) + [ABC_END]
-            sem_idx = list(range(CODEC_OFFSET, CODEC_OFFSET + CODEC_SIZE)) + [MUSIC_END]
-            self.abc_token_ids = abc_idx
-            self.sem_token_ids = sem_idx
+                # Slice lm_head for ABC ([0..EOD-1, ABC_END]) and Semantic ([CODEC_OFFSET..+CODEC_SIZE, MUSIC_END])
+                lm_full = f.get_tensor("lm_head.weight")
+                abc_idx = list(range(EOD)) + [ABC_END]
+                sem_idx = list(range(CODEC_OFFSET, CODEC_OFFSET + CODEC_SIZE)) + [MUSIC_END]
+                self.abc_token_ids = abc_idx
+                self.sem_token_ids = sem_idx
 
-            lm_abc_fp16 = lm_full[abc_idx].to(device=dev, dtype=torch.float16).contiguous()
-            lm_sem_fp16 = lm_full[sem_idx].to(device=dev, dtype=torch.float16).contiguous()
-            # Use W4A16 (g=128) for sliced lm_head when ar_quant=="w4" (2x faster ABC lm_head!), else W8A16
-            self.lm_is_w4 = 1 if self.ar_quant == "w4" else 0
-            if self.lm_is_w4:
-                self.lm_abc_w, self.lm_abc_s = quantize_w4_g128(lm_abc_fp16)
-                self.lm_sem_w, self.lm_sem_s = quantize_w4_g128(lm_sem_fp16)
-            else:
-                self.lm_abc_w, self.lm_abc_s = quantize_w8(lm_abc_fp16)
-                self.lm_sem_w, self.lm_sem_s = quantize_w8(lm_sem_fp16)
-            self.lm_abc_fp16 = lm_abc_fp16  # kept only for prefill last-token logit (exact)
-            self.lm_sem_fp16 = lm_sem_fp16
-            del lm_full
+                lm_abc_fp16 = lm_full[abc_idx].to(device=dev, dtype=torch.float16).contiguous()
+                lm_sem_fp16 = lm_full[sem_idx].to(device=dev, dtype=torch.float16).contiguous()
+                # Use W4A16 (g=128) for sliced lm_head when ar_quant=="w4" (2x faster ABC lm_head!), else W8A16
+                self.lm_is_w4 = 1 if self.ar_quant == "w4" else 0
+                if self.lm_is_w4:
+                    self.lm_abc_w, self.lm_abc_s = quantize_w4_g128(lm_abc_fp16)
+                    self.lm_sem_w, self.lm_sem_s = quantize_w4_g128(lm_sem_fp16)
+                else:
+                    self.lm_abc_w, self.lm_abc_s = quantize_w8(lm_abc_fp16)
+                    self.lm_sem_w, self.lm_sem_s = quantize_w8(lm_sem_fp16)
+                self.lm_abc_fp16 = lm_abc_fp16  # kept only for prefill last-token logit (exact)
+                self.lm_sem_fp16 = lm_sem_fp16
+                del lm_full
 
-            # NAR auxiliary
-            self.vae2llm_w = f.get_tensor("vae2llm.weight").to(device=dev, dtype=torch.float16).contiguous()
-            self.vae2llm_b = f.get_tensor("vae2llm.bias").to(device=dev, dtype=torch.float16).contiguous()
-            self.llm2vae_w = f.get_tensor("llm2vae.weight").to(device=dev, dtype=torch.float16).contiguous()
-            self.llm2vae_b = f.get_tensor("llm2vae.bias").to(device=dev, dtype=torch.float16).contiguous()
-            self.t_mlp0_w = f.get_tensor("time_embedder.mlp.0.weight").to(device=dev, dtype=torch.float16).contiguous()
-            self.t_mlp0_b = f.get_tensor("time_embedder.mlp.0.bias").to(device=dev, dtype=torch.float16).contiguous()
-            self.t_mlp2_w = f.get_tensor("time_embedder.mlp.2.weight").to(device=dev, dtype=torch.float16).contiguous()
-            self.t_mlp2_b = f.get_tensor("time_embedder.mlp.2.bias").to(device=dev, dtype=torch.float16).contiguous()
+                # NAR auxiliary
+                self.vae2llm_w = f.get_tensor("vae2llm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                self.vae2llm_b = f.get_tensor("vae2llm.bias").to(device=dev, dtype=torch.float16).contiguous()
+                self.llm2vae_w = f.get_tensor("llm2vae.weight").to(device=dev, dtype=torch.float16).contiguous()
+                self.llm2vae_b = f.get_tensor("llm2vae.bias").to(device=dev, dtype=torch.float16).contiguous()
+                self.t_mlp0_w = f.get_tensor("time_embedder.mlp.0.weight").to(device=dev, dtype=torch.float16).contiguous()
+                self.t_mlp0_b = f.get_tensor("time_embedder.mlp.0.bias").to(device=dev, dtype=torch.float16).contiguous()
+                self.t_mlp2_w = f.get_tensor("time_embedder.mlp.2.weight").to(device=dev, dtype=torch.float16).contiguous()
+                self.t_mlp2_b = f.get_tensor("time_embedder.mlp.2.bias").to(device=dev, dtype=torch.float16).contiguous()
 
-            for i in range(self.L):
-                p = f"model.layers.{i}."
-                # --- AR weights ---
-                in_ln = f.get_tensor(p + "input_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                post_ln = f.get_tensor(p + "post_attention_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                q_nw = f.get_tensor(p + "self_attn.q_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                k_nw = f.get_tensor(p + "self_attn.k_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                def _merge_lora(base_fp16: torch.Tensor, key_prefix: str) -> torch.Tensor:
+                    a = lora_f.get_tensor(f"{key_prefix}.lora_A").to(device=dev, dtype=torch.float32)
+                    b = lora_f.get_tensor(f"{key_prefix}.lora_B").to(device=dev, dtype=torch.float32)
+                    return (base_fp16.float() + (b @ a)).to(torch.float16).contiguous()
 
-                q_w = f.get_tensor(p + "self_attn.q_proj.weight").to(device=dev, dtype=torch.float16)
-                k_w = f.get_tensor(p + "self_attn.k_proj.weight").to(device=dev, dtype=torch.float16)
-                v_w = f.get_tensor(p + "self_attn.v_proj.weight").to(device=dev, dtype=torch.float16)
-                qkv_fp16 = torch.cat([q_w, k_w, v_w], dim=0).contiguous()
-                o_fp16 = f.get_tensor(p + "self_attn.o_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
-                g_fp16 = f.get_tensor(p + "mlp.gate_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
-                u_fp16 = f.get_tensor(p + "mlp.up_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
-                gu_fp16 = torch.cat([g_fp16, u_fp16], dim=0).contiguous()
-                d_fp16 = f.get_tensor(p + "mlp.down_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                for i in range(self.L):
+                    p = f"model.layers.{i}."
+                    # --- AR weights ---
+                    in_ln = f.get_tensor(p + "input_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    post_ln = f.get_tensor(p + "post_attention_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    q_nw = f.get_tensor(p + "self_attn.q_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    k_nw = f.get_tensor(p + "self_attn.k_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
 
-                # Keep FP16 AR weights for exact prefill & NAR AR-prefix prefill (2.8 GB fits easily in 32 GB!)
-                # AND keep quantized copies for ultra-fast AR decode!
-                self.ar_layers.append({
-                    "in_ln": in_ln, "post_ln": post_ln, "q_nw": q_nw, "k_nw": k_nw,
-                    "qkv_fp16": qkv_fp16, "o_fp16": o_fp16, "gu_fp16": gu_fp16, "d_fp16": d_fp16,
-                    "qkv_q": pack_ar(qkv_fp16), "o_q": pack_ar(o_fp16),
-                    "g_q": pack_ar(g_fp16), "u_q": pack_ar(u_fp16), "d_q": pack_ar(d_fp16),
-                })
+                    q_w = f.get_tensor(p + "self_attn.q_proj.weight").to(device=dev, dtype=torch.float16)
+                    k_w = f.get_tensor(p + "self_attn.k_proj.weight").to(device=dev, dtype=torch.float16)
+                    v_w = f.get_tensor(p + "self_attn.v_proj.weight").to(device=dev, dtype=torch.float16)
+                    qkv_fp16 = torch.cat([q_w, k_w, v_w], dim=0).contiguous()
+                    o_fp16 = f.get_tensor(p + "self_attn.o_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    g_fp16 = f.get_tensor(p + "mlp.gate_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    u_fp16 = f.get_tensor(p + "mlp.up_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    gu_fp16 = torch.cat([g_fp16, u_fp16], dim=0).contiguous()
+                    d_fp16 = f.get_tensor(p + "mlp.down_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
 
-                # --- NAR weights (FP16) ---
-                n_in_ln = f.get_tensor(p + "nar_input_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                n_post_ln = f.get_tensor(p + "nar_pre_mlp_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                n_q_nw = f.get_tensor(p + "nar_self_attn.q_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                n_k_nw = f.get_tensor(p + "nar_self_attn.k_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
-                nq_w = f.get_tensor(p + "nar_self_attn.q_proj.weight").to(device=dev, dtype=torch.float16)
-                nk_w = f.get_tensor(p + "nar_self_attn.k_proj.weight").to(device=dev, dtype=torch.float16)
-                nv_w = f.get_tensor(p + "nar_self_attn.v_proj.weight").to(device=dev, dtype=torch.float16)
-                n_qkv = torch.cat([nq_w, nk_w, nv_w], dim=0).contiguous()
-                n_o = f.get_tensor(p + "nar_self_attn.o_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
-                ng_w = f.get_tensor(p + "nar_mlp.gate_proj.weight").to(device=dev, dtype=torch.float16)
-                nu_w = f.get_tensor(p + "nar_mlp.up_proj.weight").to(device=dev, dtype=torch.float16)
-                n_gu = torch.cat([ng_w, nu_w], dim=0).contiguous()
-                n_d = f.get_tensor(p + "nar_mlp.down_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    # Keep FP16 AR weights for exact prefill & NAR AR-prefix prefill (2.8 GB fits easily in 32 GB!)
+                    # AND keep quantized copies for ultra-fast AR decode!
+                    self.ar_layers.append({
+                        "in_ln": in_ln, "post_ln": post_ln, "q_nw": q_nw, "k_nw": k_nw,
+                        "qkv_fp16": qkv_fp16, "o_fp16": o_fp16, "gu_fp16": gu_fp16, "d_fp16": d_fp16,
+                        "qkv_q": pack_ar(qkv_fp16), "o_q": pack_ar(o_fp16),
+                        "g_q": pack_ar(g_fp16), "u_q": pack_ar(u_fp16), "d_q": pack_ar(d_fp16),
+                    })
 
-                self.nar_layers.append({
-                    "in_ln": n_in_ln, "post_ln": n_post_ln, "q_nw": n_q_nw, "k_nw": n_k_nw,
-                    "qkv": n_qkv, "o": n_o, "gu": n_gu, "d": n_d,
-                })
+                    if lora_f is not None:
+                        lp = f"layers.{i}."
+                        qi_w = _merge_lora(q_w, lp + "self_attn.q_proj")
+                        ki_w = _merge_lora(k_w, lp + "self_attn.k_proj")
+                        vi_w = _merge_lora(v_w, lp + "self_attn.v_proj")
+                        qkv_inst = torch.cat([qi_w, ki_w, vi_w], dim=0).contiguous()
+                        o_inst = _merge_lora(o_fp16, lp + "self_attn.o_proj")
+                        gi_w = _merge_lora(g_fp16, lp + "mlp.gate_proj")
+                        ui_w = _merge_lora(u_fp16, lp + "mlp.up_proj")
+                        gu_inst = torch.cat([gi_w, ui_w], dim=0).contiguous()
+                        d_inst = _merge_lora(d_fp16, lp + "mlp.down_proj")
+                        self.ar_layers_inst.append({
+                            "in_ln": in_ln, "post_ln": post_ln, "q_nw": q_nw, "k_nw": k_nw,
+                            "qkv_fp16": qkv_inst, "o_fp16": o_inst, "gu_fp16": gu_inst, "d_fp16": d_inst,
+                            "qkv_q": pack_ar(qkv_inst), "o_q": pack_ar(o_inst),
+                            "g_q": pack_ar(gi_w), "u_q": pack_ar(ui_w), "d_q": pack_ar(d_inst),
+                        })
+
+                    # --- NAR weights (FP16) ---
+                    n_in_ln = f.get_tensor(p + "nar_input_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    n_post_ln = f.get_tensor(p + "nar_pre_mlp_layernorm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    n_q_nw = f.get_tensor(p + "nar_self_attn.q_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    n_k_nw = f.get_tensor(p + "nar_self_attn.k_norm.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    nq_w = f.get_tensor(p + "nar_self_attn.q_proj.weight").to(device=dev, dtype=torch.float16)
+                    nk_w = f.get_tensor(p + "nar_self_attn.k_proj.weight").to(device=dev, dtype=torch.float16)
+                    nv_w = f.get_tensor(p + "nar_self_attn.v_proj.weight").to(device=dev, dtype=torch.float16)
+                    n_qkv = torch.cat([nq_w, nk_w, nv_w], dim=0).contiguous()
+                    n_o = f.get_tensor(p + "nar_self_attn.o_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+                    ng_w = f.get_tensor(p + "nar_mlp.gate_proj.weight").to(device=dev, dtype=torch.float16)
+                    nu_w = f.get_tensor(p + "nar_mlp.up_proj.weight").to(device=dev, dtype=torch.float16)
+                    n_gu = torch.cat([ng_w, nu_w], dim=0).contiguous()
+                    n_d = f.get_tensor(p + "nar_mlp.down_proj.weight").to(device=dev, dtype=torch.float16).contiguous()
+
+                    self.nar_layers.append({
+                        "in_ln": n_in_ln, "post_ln": n_post_ln, "q_nw": n_q_nw, "k_nw": n_k_nw,
+                        "qkv": n_qkv, "o": n_o, "gu": n_gu, "d": n_d,
+                    })
+        finally:
+            if lora_ctx is not None:
+                lora_ctx.__exit__(None, None, None)
+
+        self.has_inst_lora = self.ar_layers_inst is not None
+        if self.has_inst_lora:
+            print(f"[yue2] loaded & quantized instrumental AR LoRA from {self.inst_lora_path.name}", flush=True)
 
     def _init_ar_buffers(self):
         dev = self.device
@@ -569,10 +617,17 @@ class YuE2V620Engine:
         self._graphs: dict[str, torch.cuda.CUDAGraph] = {}
 
         # Build C++ layer pointer array for single-call 28-layer decode!
+        self._c_layers = self._build_c_layers(self.ar_layers)
+        self._c_layers_inst = self._build_c_layers(self.ar_layers_inst) if self.ar_layers_inst is not None else None
+        self._quant_mode = {"fp16": 0, "w8": 1, "w4": 2}[self.ar_quant]
+        self._hip_graphs: dict[str, int] = {}
+        self._hist_ring = torch.full((128,), -1, device=self.device, dtype=torch.int32)
+
+    def _build_c_layers(self, ar_layers: list[dict]):
         arr_type = ARLayerPtrs * self.L
-        self._c_layers = arr_type()
-        for i, layer in enumerate(self.ar_layers):
-            c = self._c_layers[i]
+        c_layers = arr_type()
+        for i, layer in enumerate(ar_layers):
+            c = c_layers[i]
             c.in_ln = layer["in_ln"].data_ptr()
             c.post_ln = layer["post_ln"].data_ptr()
             c.q_nw = layer["q_nw"].data_ptr()
@@ -589,9 +644,7 @@ class YuE2V620Engine:
             c.d_s = layer["d_q"][1].data_ptr() if layer["d_q"][1] is not None else 0
             c.k_cache = self.k_cache[i].data_ptr()
             c.v_cache = self.v_cache[i].data_ptr()
-        self._quant_mode = {"fp16": 0, "w8": 1, "w4": 2}[self.ar_quant]
-        self._hip_graphs: dict[str, int] = {}
-        self._hist_ring = torch.full((128,), -1, device=self.device, dtype=torch.int32)
+        return c_layers
 
     def _get_hip_graph(self, phase: str) -> int:
         if phase in self._hip_graphs:
@@ -675,13 +728,14 @@ class YuE2V620Engine:
         self._hip_graphs[phase] = (arr, len(ptrs))
         return arr, len(ptrs)
 
-    def _run_decode_step_cpp(self, phase: str):
+    def _run_decode_step_cpp(self, phase: str, use_inst_lora: bool = False):
         lm_w = self.lm_abc_w if phase == "abc" else self.lm_sem_w
         lm_s = self.lm_abc_s if phase == "abc" else self.lm_sem_s
         lm_v = len(self.abc_token_ids) if phase == "abc" else len(self.sem_token_ids)
         d_logits = self.d_logits_abc if phase == "abc" else self.d_logits_sem
+        c_layers = self._c_layers_inst if (use_inst_lora and self._c_layers_inst is not None) else self._c_layers
         self.kernels.lib.launch_ar_decode_step(
-            self._c_layers, ctypes.c_int(self.L), ctypes.c_int(self._quant_mode),
+            c_layers, ctypes.c_int(self.L), ctypes.c_int(self._quant_mode),
             ctypes.c_void_p(self.embed_tokens.data_ptr()),
             ctypes.c_void_p(self.final_norm_w.data_ptr()),
             ctypes.c_void_p(lm_w.data_ptr()),
@@ -705,14 +759,15 @@ class YuE2V620Engine:
             self.kernels._stream(),
         )
 
-    def _run_decode_step_ops(self, phase: str):
+    def _run_decode_step_ops(self, phase: str, use_inst_lora: bool = False):
         K = self.kernels
         qkv_dim = (self.Hq + 2 * self.Hkv) * self.D
         sm_scale = self.D ** -0.5
+        layers = self.ar_layers_inst if (use_inst_lora and self.ar_layers_inst is not None) else self.ar_layers
 
         K.embed_lookup(self.embed_tokens, self.d_token, self.d_x, self.H)
 
-        for i, layer in enumerate(self.ar_layers):
+        for i, layer in enumerate(layers):
             K.rmsnorm(self.d_x, layer["in_ln"], self.d_norm, 1, self.H, self.eps)
             if self.ar_quant == "w4":
                 K.gemv_w4(layer["qkv_q"][0], layer["qkv_q"][1], self.d_norm, self.d_qkv, qkv_dim, self.H, 0)
@@ -778,7 +833,7 @@ class YuE2V620Engine:
         return g
 
     @torch.inference_mode()
-    def _ar_prefill(self, prefix_ids: list[int], phase: str) -> torch.Tensor:
+    def _ar_prefill(self, prefix_ids: list[int], phase: str, use_inst_lora: bool = False) -> torch.Tensor:
         """Exact FP16 AR prefill using rocBLAS+Triton causal attention; populates k_cache/v_cache."""
         M = len(prefix_ids)
         if M < 1:
@@ -802,7 +857,8 @@ class YuE2V620Engine:
         attn_ws = TiledAttentionWorkspace(self.Hq, self.Hkv, M, self.D, bn=512, device=self.device, kernels=self.kernels)
 
         K = self.kernels
-        for i, layer in enumerate(self.ar_layers):
+        layers = self.ar_layers_inst if (use_inst_lora and self.ar_layers_inst is not None) else self.ar_layers
+        for i, layer in enumerate(layers):
             K.rmsnorm(x, layer["in_ln"], norm_buf, M, self.H, self.eps)
             qkv = F.linear(norm_buf, layer["qkv_fp16"])
             K.nar_qkv_norm_rope_transpose(
@@ -828,12 +884,12 @@ class YuE2V620Engine:
         return logits
 
     @torch.inference_mode()
-    def ar_generate(self, prefix: list[int], sampling: Sampling, seed: int, phase: str) -> tuple[list[int], dict]:
+    def ar_generate(self, prefix: list[int], sampling: Sampling, seed: int, phase: str, use_inst_lora: bool = False) -> tuple[list[int], dict]:
         assert phase in ("abc", "semantic")
         torch.cuda.synchronize(self.device)
         t0 = time.perf_counter()
 
-        logits = self._ar_prefill(prefix, phase)
+        logits = self._ar_prefill(prefix, phase, use_inst_lora=use_inst_lora)
         torch.cuda.synchronize(self.device)
         t_prefill = time.perf_counter() - t0
 
@@ -893,7 +949,7 @@ class YuE2V620Engine:
                 if prefix_len + step >= self.max_ar_seq:
                     break
                 self.d_token.fill_(global_tok)
-                self._run_decode_step_cpp(phase)
+                self._run_decode_step_cpp(phase, use_inst_lora=use_inst_lora)
                 logits = d_logits
 
         torch.cuda.synchronize(self.device)
@@ -937,6 +993,7 @@ class YuE2V620Engine:
         steps: int = 32,
         method: str = "midpoint",   # "midpoint" (2 NFE/step) or "euler" (1 NFE/step)
         context: int = CONTEXT,
+        use_inst_lora: bool = False,
     ) -> tuple[np.ndarray, dict]:
         assert method in ("midpoint", "euler")
         torch.cuda.synchronize(self.device)
@@ -967,7 +1024,8 @@ class YuE2V620Engine:
             ar_ws = TiledAttentionWorkspace(self.Hq, self.Hkv, ar_len, self.D, bn=512, device=self.device, kernels=self.kernels)
 
             ar_kv_cache = []
-            for layer in self.ar_layers:
+            ar_layers = self.ar_layers_inst if (use_inst_lora and self.ar_layers_inst is not None) else self.ar_layers
+            for layer in ar_layers:
                 K.rmsnorm(x_ar, layer["in_ln"], norm_ar, ar_len, self.H, self.eps)
                 qkv = F.linear(norm_ar, layer["qkv_fp16"])
                 k_ar = torch.empty((self.Hkv, ar_len, self.D), device=self.device, dtype=torch.float16)
@@ -1084,11 +1142,13 @@ class YuE2V620Engine:
         ode_method: str = "midpoint",
         output_path: Optional[str | Path] = None,
         on_stage=None,
+        instrumental: bool = False,
     ) -> dict:
         def _notify(stage: str, pct: int, detail: str = ""):
             if on_stage is not None:
                 on_stage(stage, pct, detail)
 
+        use_inst = bool(instrumental and self.has_inst_lora)
         req = SongRequest(style=style, lyrics=lyrics, cot=cot, seed=seed, abc=abc)
         gen_cfg = GenerationConfig()
         t_start = time.perf_counter()
@@ -1103,9 +1163,9 @@ class YuE2V620Engine:
             abc_timing = {"seconds": 0.0, "output_tokens": 0}
             prefix = token_prefixes(req, self.tokenizer, abc_ids)
         else:
-            _notify("abc", 10, "Planning symbolic ABC score...")
+            _notify("abc", 10, "Planning instrumental ABC score..." if instrumental else "Planning symbolic ABC score...")
             abc_prefix = token_prefixes(req, self.tokenizer)
-            abc_ids, abc_timing = self.ar_generate(abc_prefix, gen_cfg.abc, seed, "abc")
+            abc_ids, abc_timing = self.ar_generate(abc_prefix, gen_cfg.abc, seed, "abc", use_inst_lora=use_inst)
             abc_text = self.tokenizer.decode(abc_ids)
             prefix = token_prefixes(req, self.tokenizer, abc_ids)
 
@@ -1133,12 +1193,12 @@ class YuE2V620Engine:
             min_tokens=min(gen_cfg.semantic.min_tokens, eff_max_sem),
             max_tokens=eff_max_sem,
         )
-        sem_raw, sem_timing = self.ar_generate(prefix, sem_sampling, seed, "semantic")
+        sem_raw, sem_timing = self.ar_generate(prefix, sem_sampling, seed, "semantic", use_inst_lora=use_inst)
         codec = [t - CODEC_OFFSET for t in sem_raw]
 
         # 3. NAR Acoustic Flow Matching
         _notify("nar", 65, f"Acoustic flow matching ({ode_steps}-step {ode_method})...")
-        latents, nar_timing = self.nar_synthesize(prefix, codec, seed, steps=ode_steps, method=ode_method)
+        latents, nar_timing = self.nar_synthesize(prefix, codec, seed, steps=ode_steps, method=ode_method, use_inst_lora=use_inst)
 
         # 4. VAE Decode
         _notify("vae", 90, "Decoding 48 kHz stereo audio (Oobleck VAE)...")
@@ -1158,6 +1218,8 @@ class YuE2V620Engine:
             "audio_seconds": len(audio) / 48000.0,
             "abc": abc_text,
             "codec_frames": len(codec),
+            "instrumental": bool(instrumental),
+            "inst_lora_used": use_inst,
             "timing": {
                 "abc": abc_timing,
                 "semantic": sem_timing,

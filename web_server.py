@@ -28,10 +28,10 @@ from urllib.parse import urlparse
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from yue2_v620 import YuE2V620Engine
 
@@ -39,6 +39,7 @@ BASE_DIR = Path(__file__).resolve().parent
 LIB_DIR = BASE_DIR / "library"
 AUDIO_DIR = LIB_DIR / "audio"
 COVERS_DIR = LIB_DIR / "covers"
+UPLOADS_DIR = LIB_DIR / "uploads"
 META_FILE = LIB_DIR / "songs.json"
 SETTINGS_FILE = LIB_DIR / "settings.json"
 USERS_FILE = LIB_DIR / "users.json"
@@ -69,6 +70,7 @@ _DEFAULT_SETTINGS = {
 
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 COVERS_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 WEB_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="YuE2 Studio — ROCm")
@@ -84,6 +86,7 @@ _cover_lock = threading.Lock()
 _meta_lock = threading.Lock()
 _settings_lock = threading.Lock()
 _jobs: dict[str, dict] = {}
+_analyses: dict[str, dict] = {}
 _songs: list[dict] = []
 
 
@@ -540,16 +543,17 @@ def _call_llm(sys_msg: str, user_msg: str, max_tokens: Optional[int] = None, ses
         return None
 
 
-def _craft_song_title(style: str, lyrics: str, session_id: Optional[str] = None) -> str:
+def _craft_song_title(style: str, lyrics: str, session_id: Optional[str] = None, instrumental: bool = False) -> str:
     """Ask the configured LLM for a short, evocative song title from style & lyrics."""
     snippet = (lyrics or "").strip()[:500]
+    body = f"Style: {style}\nType: Instrumental track (no vocals)" if (instrumental or not snippet) else f"Style: {style}\nLyrics:\n{snippet}"
     txt = _call_llm(
         sys_msg=(
-            "You are a music producer naming a song. Given the musical style and lyrics, "
+            "You are a music producer naming a song. Given the musical style and lyrics (or instrumental feel), "
             "output a single short, memorable song title (2 to 5 words). "
             "No quotes, no punctuation at the end, no explanation — output ONLY the title."
         ),
-        user_msg=f"Style: {style}\nLyrics:\n{snippet}",
+        user_msg=body,
         session_id=session_id,
     )
     if txt:
@@ -559,18 +563,19 @@ def _craft_song_title(style: str, lyrics: str, session_id: Optional[str] = None)
     return "Untitled Track"
 
 
-def _craft_cover_prompt(title: str, style: str, lyrics: str, session_id: Optional[str] = None) -> str:
+def _craft_cover_prompt(title: str, style: str, lyrics: str, session_id: Optional[str] = None, instrumental: bool = False) -> str:
     """Ask the configured LLM provider (openai-compat / openrouter / anthropic / ollama / opencode-go) for an album cover prompt."""
     snippet = (lyrics or "").strip()[:500]
     fallback = f"Artistic vinyl album cover art inspired by {style}, mood of '{title}', atmospheric lighting, rich texture, no text, no letters, no watermark"
+    body = f"Title: {title}\nStyle: {style}\nType: Instrumental track (no vocals)" if (instrumental or not snippet) else f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}"
     txt = _call_llm(
         sys_msg=(
-            "You are an album cover art director. Given a song's title, musical style, and lyrics, "
+            "You are an album cover art director. Given a song's title, musical style, and lyrics (or instrumental mood), "
             "write a single concise visual image-generation prompt (2-3 sentences max) for a striking "
             "square album cover. Focus on composition, color palette, lighting, and artistic medium. "
             "Never include text, words, logos, or typography in the image. Output ONLY the prompt."
         ),
-        user_msg=f"Title: {title}\nStyle: {style}\nLyrics:\n{snippet}",
+        user_msg=body,
         session_id=session_id,
     )
     return txt or fallback
@@ -745,8 +750,8 @@ def _generate_cover_image(song_id: str, prompt: str) -> Optional[str]:
         return None
 
 
-def _run_cover_pipeline(song_id: str, title: str, style: str, lyrics: str, custom_prompt: Optional[str], shared_result: Optional[dict] = None, session_id: Optional[str] = None):
-    prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else _craft_cover_prompt(title, style, lyrics, session_id=session_id or song_id)
+def _run_cover_pipeline(song_id: str, title: str, style: str, lyrics: str, custom_prompt: Optional[str], shared_result: Optional[dict] = None, session_id: Optional[str] = None, instrumental: bool = False):
+    prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else _craft_cover_prompt(title, style, lyrics, session_id=session_id or song_id, instrumental=instrumental)
     cover_url = _generate_cover_image(song_id, prompt)
     if shared_result is not None:
         shared_result["cover_prompt"] = prompt
@@ -908,13 +913,20 @@ def _yield_watcher():
             cfg = _get_settings()
             if not cfg.get("yield_enabled") or _engine is None:
                 continue
-            if _gpu_lock.locked() or any(j["status"] in ("queued", "running") for j in _jobs.values()):
+            if (
+                _gpu_lock.locked()
+                or any(j["status"] in ("queued", "running") for j in _jobs.values())
+                or any(a["status"] in ("queued", "running") for a in _analyses.values())
+            ):
                 continue
             if not _router_busy():
                 continue
             if _gpu_lock.acquire(blocking=False):
                 try:
-                    if any(j["status"] in ("queued", "running") for j in _jobs.values()):
+                    if (
+                        any(j["status"] in ("queued", "running") for j in _jobs.values())
+                        or any(a["status"] in ("queued", "running") for a in _analyses.values())
+                    ):
                         continue
                     _release_engine()
                 finally:
@@ -954,7 +966,7 @@ app.router.lifespan_context = _lifespan
 class GenerateRequest(BaseModel):
     title: str = Field(default="")
     style: str = Field(..., min_length=1)
-    lyrics: str = Field(..., min_length=1)
+    lyrics: str = Field(default="")
     cot: str = Field(default="full")
     ode_steps: int = Field(default=8, ge=1, le=64)
     ode_method: str = Field(default="midpoint")
@@ -963,17 +975,24 @@ class GenerateRequest(BaseModel):
     abc: Optional[str] = None
     cover_prompt: Optional[str] = None
     generate_cover: bool = Field(default=True)
+    instrumental: bool = Field(default=False)
     source: str = Field(default="ui")
     user_id: Optional[str] = Field(default=None)
     workspace_id: Optional[str] = Field(default=None)
     folder_id: Optional[str] = Field(default=None)
 
-    @field_validator("style", "lyrics")
+    @field_validator("style")
     @classmethod
-    def _require_non_blank(cls, v: str, info) -> str:
+    def _require_non_blank_style_gen(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError(f"{info.field_name.capitalize()} cannot be empty")
+            raise ValueError("Style cannot be empty")
         return v
+
+    @model_validator(mode="after")
+    def _require_lyrics_unless_instrumental(self):
+        if not self.instrumental and (not self.lyrics or not self.lyrics.strip()):
+            raise ValueError("Lyrics cannot be empty unless instrumental=True")
+        return self
 
 
 class RemixRequest(BaseModel):
@@ -989,6 +1008,7 @@ class RemixRequest(BaseModel):
     strip_chords: bool = Field(default=False)
     cover_prompt: Optional[str] = None
     generate_cover: bool = Field(default=True)
+    instrumental: bool = Field(default=False)
     user_id: Optional[str] = Field(default=None)
     workspace_id: Optional[str] = Field(default=None)
     folder_id: Optional[str] = Field(default=None)
@@ -1002,8 +1022,51 @@ class RemixRequest(BaseModel):
 
 
 def _strip_abc_chords(abc: str) -> str:
-    """Drop chord symbols (quoted strings) from ABC for melody-only remixes."""
-    return re.sub(r'"[^"]*"', '', abc)
+    """Drop chord symbols (quoted strings) from ABC music lines without touching header metadata."""
+    out_lines = []
+    for line in abc.splitlines():
+        s = line.lstrip()
+        if not s or s.startswith("%") or re.match(r"^[A-Za-z]:", s):
+            out_lines.append(line)
+        else:
+            out_lines.append(re.sub(r'"[^"]*"', "", line))
+    return "\n".join(out_lines)
+
+
+_INST_SECTION_RE = re.compile(
+    r"^\[(intro|verse|pre-chorus|chorus|bridge|outro)(?:\s+(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}))?\]$",
+    re.I,
+)
+_INST_NUMBERED_RE = re.compile(
+    r"^\[(intro|verse|pre-chorus|chorus|bridge|outro)\s*\d+\]$",
+    re.I,
+)
+
+
+def _prepare_instrumental_inputs(style: str, lyrics: str) -> tuple[str, str]:
+    """Ensure style declares instrumental and normalize section tags for ar_lora_inst_v3abc."""
+    eff_style = style.strip()
+    if "instrumental" not in eff_style.lower():
+        eff_style = f"{eff_style}, instrumental, no vocals"
+    elif "no vocals" not in eff_style.lower():
+        eff_style = f"{eff_style}, no vocals"
+
+    tags: list[str] = []
+    for raw_line in (lyrics or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m = _INST_SECTION_RE.match(line)
+        if m:
+            tag_name = m.group(1).lower()
+            timing = m.group(2)
+            tags.append(f"[{tag_name} {timing.replace(' ', '')}]" if timing else f"[{tag_name}]")
+            continue
+        m_num = _INST_NUMBERED_RE.match(line)
+        if m_num:
+            tags.append(f"[{m_num.group(1).lower()}]")
+    eff_lyrics = "\n".join(tags) if tags else "[instrumental]"
+    return eff_style, eff_lyrics
 
 
 def _enqueue_generation(
@@ -1024,8 +1087,14 @@ def _enqueue_generation(
     workspace_id: Optional[str],
     folder_id: Optional[str],
     remixed_from: Optional[str] = None,
+    instrumental: bool = False,
 ) -> str:
     job_id = uuid.uuid4().hex[:10]
+    eff_style, eff_lyrics = (
+        _prepare_instrumental_inputs(style, lyrics)
+        if instrumental
+        else (style.strip(), lyrics.strip())
+    )
     raw_title = (title or "").strip()
     needs_title = not raw_title or raw_title.lower() in {"untitled", "untitled track"}
     final_title = raw_title if not needs_title else "Untitled Track"
@@ -1035,8 +1104,9 @@ def _enqueue_generation(
     job = {
         "job_id": job_id,
         "title": final_title,
-        "style": style.strip(),
+        "style": eff_style,
         "cot": cot,
+        "instrumental": bool(instrumental),
         "source": source,
         "remixed_from": remixed_from,
         "user_id": uid,
@@ -1060,7 +1130,7 @@ def _enqueue_generation(
     def _sidecar_title_and_cover():
         chosen_title = final_title
         if needs_title:
-            chosen_title = _craft_song_title(style.strip(), lyrics.strip(), session_id=job_id)
+            chosen_title = _craft_song_title(eff_style, eff_lyrics, session_id=job_id, instrumental=instrumental)
             cover_shared["title"] = chosen_title
             job["title"] = chosen_title
             _broadcast("job_update", {"job": dict(job)})
@@ -1071,7 +1141,7 @@ def _enqueue_generation(
                     _broadcast("song_updated", {"song": s})
                     break
         if generate_cover:
-            _run_cover_pipeline(job_id, chosen_title, style.strip(), lyrics.strip(), cover_prompt, cover_shared, session_id=job_id)
+            _run_cover_pipeline(job_id, chosen_title, eff_style, eff_lyrics, cover_prompt, cover_shared, session_id=job_id, instrumental=instrumental)
 
     if needs_title or generate_cover:
         threading.Thread(target=_sidecar_title_and_cover, daemon=True).start()
@@ -1104,8 +1174,8 @@ def _enqueue_generation(
                     abc_in = None
                 max_sem = int(duration_seconds * 25) if duration_seconds is not None else 9000
                 res = _ensure_engine().generate_song(
-                    style=style.strip(),
-                    lyrics=lyrics.strip(),
+                    style=eff_style,
+                    lyrics=eff_lyrics,
                     cot=cot,
                     seed=seed,
                     abc=abc_in,
@@ -1114,6 +1184,7 @@ def _enqueue_generation(
                     ode_method=ode_method,
                     output_path=out_path,
                     on_stage=on_stage,
+                    instrumental=instrumental,
                 )
                 t = res["timing"]
                 song = {
@@ -1122,9 +1193,11 @@ def _enqueue_generation(
                     "user_id": uid,
                     "workspace_id": wid,
                     "folder_id": fid,
-                    "style": style.strip(),
-                    "lyrics": lyrics.strip(),
+                    "style": eff_style,
+                    "lyrics": eff_lyrics,
                     "cot": cot,
+                    "instrumental": bool(instrumental),
+                    "inst_lora_used": bool(res.get("inst_lora_used")),
                     "seed": seed,
                     "ode_steps": ode_steps,
                     "ode_method": ode_method,
@@ -1301,6 +1374,7 @@ class SongUpdate(BaseModel):
 class ComposeRequest(BaseModel):
     prompt: str = Field(..., min_length=3, max_length=2000)
     session_id: Optional[str] = Field(default=None, max_length=64)
+    instrumental: bool = Field(default=False)
 
 
 @app.get("/api/users")
@@ -1535,28 +1609,43 @@ def compose_song(req: ComposeRequest):
     if not prompt:
         raise HTTPException(400, "Prompt is empty")
     sid = (req.session_id or "").strip() or f"compose-{uuid.uuid4().hex[:10]}"
-    txt = _call_llm(
-        sys_msg=(
+    if req.instrumental:
+        sys_msg = (
+            "You write YuE2 instrumental music inputs as strict JSON. Output ONLY a JSON object with "
+            "exactly these keys: title (2-5 words), style (one line: genre, 'instrumental, no vocals', "
+            "key instruments, atmosphere, tempo like '120 BPM'), lyrics (ONLY structural section tags "
+            "from [intro], [verse], [pre-chorus], [chorus], [bridge], [outro] separated by newlines, "
+            "5 to 8 tags total, NO sung words or prose). No markdown, no commentary."
+        )
+        user_msg = f"Instrumental track idea: {prompt}"
+    else:
+        sys_msg = (
             "You write YuE2 song inputs as strict JSON. Output ONLY a JSON object with "
             "exactly these keys: title (2-5 words), style (one line: genre, vocal character, "
             "key instruments, tempo like '120 BPM'), lyrics (full song with [Verse 1], [Chorus], "
             "[Verse 2], [Chorus], [Bridge], [Outro] section tags, vivid singable lines). "
             "Keep lyrics 150-300 words so a ~2 minute song results. No markdown, no commentary."
-        ),
-        user_msg=f"Song idea: {prompt}",
+        )
+        user_msg = f"Song idea: {prompt}"
+    txt = _call_llm(
+        sys_msg=sys_msg,
+        user_msg=user_msg,
         session_id=sid,
     )
     data = _extract_compose_json(txt or "")
-    if not data or not (data.get("style") and data.get("lyrics")):
+    if not data or not data.get("style") or (not req.instrumental and not data.get("lyrics")):
         raise HTTPException(502, "LLM did not return usable song JSON (check provider, model, API key).")
     title = str(data.get("title") or "Untitled Track").splitlines()[0].strip()[:80] or "Untitled Track"
     style = str(data.get("style") or "").strip()[:500]
     lyrics = str(data.get("lyrics") or "").strip()[:4000]
+    if req.instrumental:
+        style, lyrics = _prepare_instrumental_inputs(style, lyrics)
     cover_prompt = str(data.get("cover_prompt") or "").strip()[:500] or None
     return {
         "title": title,
         "style": style,
         "lyrics": lyrics,
+        "instrumental": bool(req.instrumental),
         "cover_prompt": cover_prompt,
         "session_id": sid,
     }
@@ -1843,7 +1932,12 @@ async def events(request: Request):
                 for j in _jobs.values()
                 if j["status"] in ("queued", "running")
             ]
-            yield f"event: hello\ndata: {json.dumps({'active_jobs': active})}\n\n"
+            active_analyses = [
+                {**a, "elapsed_seconds": round(time.time() - a["started_at"], 1)}
+                for a in _analyses.values()
+                if a["status"] in ("queued", "running")
+            ]
+            yield f"event: hello\ndata: {json.dumps({'active_jobs': active, 'active_analyses': active_analyses})}\n\n"
             while not _shutting_down:
                 if await request.is_disconnected():
                     break
@@ -1895,6 +1989,10 @@ def health():
         "gpu": "AMD Radeon PRO V620 (gfx1030, 32GB)",
         "vram_gb": round(torch.cuda.memory_allocated() / 1e9, 2) if torch.cuda.is_available() else 0,
         "busy": _gpu_lock.locked(),
+        "inst_lora_available": (BASE_DIR / "YuE2-Inst-LoRA" / "ar_lora_inst_v3abc.bf16.safetensors").is_file(),
+        "music_flamingo_available": (BASE_DIR / "music-flamingo-2601-hf").exists() and (BASE_DIR / ".venv-flamingo" / "bin" / "python").is_file(),
+        "sheetsage2_available": (BASE_DIR / "SheetSage2").exists() and (BASE_DIR / "MERT-v2-FullSong").exists(),
+        "parakeet_available": (BASE_DIR / "parakeet-tdt-0.6b-v3").exists() and (BASE_DIR / ".venv-flamingo" / "bin" / "python").is_file(),
     }
 
 
@@ -1948,7 +2046,7 @@ def regenerate_cover(song_id: str, req: CoverRequest = CoverRequest()):
         raise HTTPException(404, "Song not found")
     threading.Thread(
         target=_run_cover_pipeline,
-        args=(song_id, found["title"], found["style"], found["lyrics"], req.cover_prompt, None),
+        args=(song_id, found["title"], found["style"], found["lyrics"], req.cover_prompt, None, None, bool(found.get("instrumental"))),
         daemon=True,
     ).start()
     return {"ok": True, "song_id": song_id}
@@ -1986,6 +2084,7 @@ def generate(req: GenerateRequest):
         user_id=req.user_id,
         workspace_id=req.workspace_id,
         folder_id=req.folder_id,
+        instrumental=req.instrumental,
     )
     return {"job_id": job_id}
 
@@ -2007,8 +2106,8 @@ def remix_song(song_id: str, req: RemixRequest):
             raise HTTPException(400, "Source song has no ABC score to remix (try Generate instead)")
         abc_reuse = _strip_abc_chords(abc_src) if req.strip_chords or req.cot == "melody" else abc_src
     lyrics = req.lyrics.strip() if req.lyrics and req.lyrics.strip() else (src.get("lyrics") or "").strip()
-    if not lyrics:
-        raise HTTPException(400, "Remix needs lyrics (pass lyrics or pick a source with lyrics)")
+    if not lyrics and not req.instrumental:
+        raise HTTPException(400, "Remix needs lyrics (pass lyrics, pick a source with lyrics, or enable Instrumental)")
     title = (req.title or "").strip() or f"{src.get('title') or 'Untitled'} (Remix)"
     seed = req.seed if req.seed is not None else random.randint(1, 2_000_000)
     job_id = _enqueue_generation(
@@ -2028,8 +2127,283 @@ def remix_song(song_id: str, req: RemixRequest):
         workspace_id=req.workspace_id if req.workspace_id is not None else src.get("workspace_id"),
         folder_id=req.folder_id if req.folder_id is not None else src.get("folder_id"),
         remixed_from=song_id,
+        instrumental=req.instrumental,
     )
     return {"job_id": job_id, "remixed_from": song_id}
+
+
+_ALLOWED_AUDIO_EXTS = {
+    ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".webm", ".mp4", ".wma", ".aiff", ".aif",
+}
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _run_analysis_worker(cmd: list[str], on_stage, timeout_s: int = 420) -> dict:
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    timed_out = threading.Event()
+    timer = threading.Timer(timeout_s, lambda: (timed_out.set(), proc.kill()))
+    timer.start()
+    out_buf: list[str] = []
+    err_lines: list[str] = []
+
+    def _read_out():
+        assert proc.stdout is not None
+        out_buf.append(proc.stdout.read())
+
+    out_t = threading.Thread(target=_read_out, daemon=True)
+    out_t.start()
+    try:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            s = line.strip()
+            if not s:
+                continue
+            err_lines.append(s)
+            if s.startswith("STAGE:"):
+                on_stage(s[6:].strip())
+        rc = proc.wait()
+        out_t.join(timeout=5.0)
+    finally:
+        timer.cancel()
+
+    if timed_out.is_set():
+        raise RuntimeError(f"Audio analysis timed out after {timeout_s}s")
+    if rc != 0:
+        tail = "\n".join(err_lines[-8:]) or f"exit code {rc}"
+        raise RuntimeError(f"Audio analysis failed: {tail}")
+
+    raw_out = "".join(out_buf).strip()
+    for line in reversed(raw_out.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                parsed = json.loads(line)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+    raise RuntimeError("Audio worker returned invalid JSON output")
+
+
+@app.post("/api/analyze-audio")
+async def analyze_audio_upload(
+    file: UploadFile = File(...),
+    mode: str = Form("style"),
+    skip_lyrics: bool = Form(False),
+    max_seconds: int = Form(240),
+):
+    mode = (mode or "style").strip().lower()
+    if mode not in ("style", "cover", "full"):
+        raise HTTPException(400, "mode must be style, cover, or full")
+    max_seconds = max(15, min(360, int(max_seconds)))
+
+    flamingo_py = BASE_DIR / ".venv-flamingo" / "bin" / "python"
+    if mode in ("style", "full") and (
+        not (BASE_DIR / "music-flamingo-2601-hf").exists() or not flamingo_py.is_file()
+    ):
+        raise HTTPException(503, "Music Flamingo model or .venv-flamingo is not available on this host")
+    if mode in ("cover", "full"):
+        if not (BASE_DIR / "SheetSage2").exists() or not (BASE_DIR / "MERT-v2-FullSong").exists():
+            raise HTTPException(503, "SheetSage2 or MERT-v2-FullSong is not available on this host")
+        if not skip_lyrics and (
+            not (BASE_DIR / "parakeet-tdt-0.6b-v3").exists() or not flamingo_py.is_file()
+        ):
+            raise HTTPException(503, "Parakeet V3 0.6B or .venv-flamingo is not available on this host")
+
+    orig_name = Path(file.filename or "upload.mp3").name
+    ext = Path(orig_name).suffix.lower()
+    ctype = (file.content_type or "").lower()
+    if ext not in _ALLOWED_AUDIO_EXTS:
+        if ctype.startswith("audio/") or ctype in ("video/mp4", "video/webm", "application/ogg"):
+            ext = ext if ext else ".audio"
+        else:
+            raise HTTPException(400, f"Unsupported audio file type: {ext or ctype or 'unknown'}")
+
+    analysis_id = uuid.uuid4().hex[:10]
+    tmp_path = UPLOADS_DIR / f"{analysis_id}{ext}"
+    total_bytes = 0
+    try:
+        with tmp_path.open("wb") as out_f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "Audio file exceeds 50 MB limit")
+                out_f.write(chunk)
+        if total_bytes < 1024:
+            raise HTTPException(400, "Uploaded audio file is empty")
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    job = {
+        "analysis_id": analysis_id,
+        "filename": orig_name,
+        "mode": mode,
+        "status": "queued",
+        "stage": "queued",
+        "progress": 3,
+        "detail": "Waiting for GPU...",
+        "started_at": time.time(),
+        "elapsed_seconds": 0.0,
+        "result": None,
+        "error": None,
+    }
+    _analyses[analysis_id] = job
+    _broadcast("analysis_update", {"analysis": dict(job)})
+
+    def _worker():
+        import sys
+        try:
+            with _gpu_lock:
+                job["status"] = "running"
+                job["started_at"] = time.time()
+                job["progress"] = 6
+                job["detail"] = "Freeing GPU VRAM for audio analysis..."
+                _broadcast("analysis_update", {"analysis": dict(job)})
+                _unload_external_models()
+                _release_engine()
+
+                transcribe_res: dict = {}
+                parakeet_res: dict = {}
+                flamingo_res: dict = {}
+
+                def _emit(stage: str, pct: int, detail: str):
+                    job["stage"] = stage
+                    job["progress"] = pct
+                    job["detail"] = detail
+                    job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
+                    _broadcast("analysis_update", {"analysis": dict(job)})
+
+                if mode in ("cover", "full"):
+                    stage_map = {
+                        "sheetsage_load": (15, "Loading SheetSage2 score transcriber..."),
+                        "sheetsage_run": (35 if mode == "cover" else 28, "Transcribing melody, chords & structure..."),
+                        "done": (56 if not skip_lyrics else (96 if mode == "cover" else 62), "Score & structure ready"),
+                    }
+                    cmd = [
+                        sys.executable,
+                        str(BASE_DIR / "transcribe_worker.py"),
+                        str(tmp_path),
+                        "--max-seconds",
+                        str(max_seconds),
+                    ]
+                    transcribe_res = _run_analysis_worker(
+                        cmd,
+                        on_stage=lambda st: _emit(st, *stage_map.get(st, (job["progress"], f"Running {st}..."))),
+                    )
+
+                    if not skip_lyrics:
+                        p_stage_map = {
+                            "parakeet_load": (64 if mode == "cover" else 44, "Loading Parakeet V3 0.6B..."),
+                            "parakeet_run": (80 if mode == "cover" else 54, "Transcribing lyrics (Parakeet V3 0.6B)..."),
+                            "done": (96 if mode == "cover" else 62, "Lyrics aligned to sections"),
+                        }
+                        p_cmd = [
+                            str(flamingo_py),
+                            str(BASE_DIR / "parakeet_worker.py"),
+                            str(tmp_path),
+                            "--max-seconds",
+                            str(max_seconds),
+                            "--sections-json",
+                            json.dumps(transcribe_res.get("sections") or []),
+                        ]
+                        if not transcribe_res.get("has_vocal_melody", True):
+                            p_cmd.append("--no-vocal-melody")
+                        parakeet_res = _run_analysis_worker(
+                            p_cmd,
+                            on_stage=lambda st: _emit(st, *p_stage_map.get(st, (job["progress"], f"Running {st}..."))),
+                        )
+
+                if mode in ("style", "full"):
+                    stage_map = {
+                        "decoding": (15 if mode == "style" else 68, "Decoding audio stream..."),
+                        "loading": (40 if mode == "style" else 76, "Loading Music Flamingo 2601 (7B)..."),
+                        "analyzing": (72 if mode == "style" else 88, "Listening & writing style prompt..."),
+                        "done": (98, "Style analysis complete"),
+                    }
+                    cmd = [
+                        str(flamingo_py),
+                        str(BASE_DIR / "flamingo_worker.py"),
+                        str(tmp_path),
+                        "--max-seconds",
+                        str(min(max_seconds, 180)),
+                    ]
+                    flamingo_res = _run_analysis_worker(
+                        cmd,
+                        on_stage=lambda st: _emit(st, *stage_map.get(st, (job["progress"], f"Running {st}..."))),
+                    )
+
+                warnings = list(transcribe_res.get("warnings") or [])
+                bpm = transcribe_res.get("bpm") or flamingo_res.get("bpm")
+                key = transcribe_res.get("key") or flamingo_res.get("key")
+                duration_s = transcribe_res.get("duration_seconds") or parakeet_res.get("duration_seconds") or flamingo_res.get("duration_seconds")
+
+                inst_flamingo = flamingo_res.get("instrumental")
+                inst_transcribe = parakeet_res.get("detected_instrumental")
+                if skip_lyrics:
+                    instrumental = True
+                elif mode == "style":
+                    instrumental = bool(inst_flamingo)
+                elif mode == "cover":
+                    instrumental = bool(inst_transcribe)
+                else:
+                    instrumental = bool(inst_flamingo or inst_transcribe)
+
+                merged = {
+                    "filename": orig_name,
+                    "mode": mode,
+                    "style": flamingo_res.get("style") or "",
+                    "description": flamingo_res.get("description") or "",
+                    "title": flamingo_res.get("title_idea") or Path(orig_name).stem,
+                    "instrumental": instrumental,
+                    "bpm": bpm,
+                    "key": key,
+                    "duration_seconds": duration_s,
+                    "abc": transcribe_res.get("abc"),
+                    "abc_melody": transcribe_res.get("abc_melody"),
+                    "lyrics": parakeet_res.get("lyrics") or "",
+                    "instrumental_structure": transcribe_res.get("instrumental_structure") or "[instrumental]",
+                    "has_vocal_melody": transcribe_res.get("has_vocal_melody", True),
+                    "sections": transcribe_res.get("sections") or [],
+                    "warnings": warnings,
+                }
+                job["result"] = merged
+                job["status"] = "done"
+                job["stage"] = "done"
+                job["progress"] = 100
+                job["detail"] = "Ready"
+                job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
+                _broadcast("analysis_update", {"analysis": dict(job)})
+        except Exception as exc:
+            tb = traceback.format_exc()
+            print(f"[analyze:{analysis_id}] failed:\n{tb}", flush=True)
+            job["status"] = "error"
+            job["stage"] = "error"
+            job["error"] = str(exc)
+            job["detail"] = str(exc)
+            job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
+            _broadcast("analysis_update", {"analysis": dict(job)})
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"analysis_id": analysis_id}
+
+
+@app.get("/api/analyze-audio/{analysis_id}")
+def get_analysis_status(analysis_id: str):
+    job = _analyses.get(analysis_id)
+    if not job:
+        raise HTTPException(404, "Analysis job not found")
+    out = dict(job)
+    if out["status"] == "running":
+        out["elapsed_seconds"] = round(time.time() - out["started_at"], 1)
+    return out
 
 
 class _GracefulServer(uvicorn.Server):

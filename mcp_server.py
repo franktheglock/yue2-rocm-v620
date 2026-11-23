@@ -84,11 +84,11 @@ def yue2_list_workspaces() -> dict:
 
 
 @mcp.tool()
-def yue2_compose(prompt: str) -> dict:
+def yue2_compose(prompt: str, instrumental: bool = False) -> dict:
     """Simple workflow: describe the song in one sentence — the configured LLM
     (OpenCode Go subscription supported) writes title, style prompt, and lyrics."""
     with _client() as c:
-        r = c.post("/api/compose", json={"prompt": prompt})
+        r = c.post("/api/compose", json={"prompt": prompt, "instrumental": instrumental})
         r.raise_for_status()
         return r.json()
 
@@ -121,7 +121,7 @@ def yue2_job_status(job_id: str) -> dict:
 @mcp.tool()
 def yue2_generate_song(
     style: str,
-    lyrics: str,
+    lyrics: str = "",
     title: str = "",
     cot: str = "full",
     ode_steps: int = 8,
@@ -131,6 +131,7 @@ def yue2_generate_song(
     abc: Optional[str] = None,
     cover_prompt: Optional[str] = None,
     generate_cover: bool = True,
+    instrumental: bool = False,
     wait: bool = True,
     workspace_id: Optional[str] = None,
     folder_id: Optional[str] = None,
@@ -139,7 +140,7 @@ def yue2_generate_song(
 
     Args:
         style: Genre, vocal character, instrumentation, tempo (e.g. "Upbeat synth-pop, female vocal, 120 BPM").
-        lyrics: Song lyrics with section tags like [Verse 1], [Chorus], [Bridge], [Outro].
+        lyrics: Song lyrics with section tags like [Verse 1], [Chorus], [Bridge], [Outro]. Optional when instrumental=True.
         title: Track title for the library.
         cot: Symbolic planning mode: "full" (chords+melody ABC), "melody" (melody-only ABC), or "off" (direct, fastest).
         ode_steps: Flow-matching steps (1-64; 5-8 midpoint is fast, 12 high fidelity, 32 studio reference).
@@ -149,6 +150,7 @@ def yue2_generate_song(
         abc: Optional ABC notation score to guide melody/chords (for covers or score-edited remixes).
         cover_prompt: Optional image prompt for album cover art (if omitted, auto-written by LAN LLM).
         generate_cover: Whether to generate AI album cover art in parallel (default True).
+        instrumental: If True, generate an instrumental track without vocals (lyrics optional; uses Instrumental LoRA when installed).
         wait: If True (default), waits until generation completes and returns the finished song metadata & paths.
         workspace_id: Optional workspace (user) to file the song under.
         folder_id: Optional folder within the workspace to file the song under.
@@ -165,6 +167,7 @@ def yue2_generate_song(
         "abc": abc,
         "cover_prompt": cover_prompt,
         "generate_cover": generate_cover,
+        "instrumental": instrumental,
         "source": "mcp",
         "workspace_id": workspace_id,
         "folder_id": folder_id,
@@ -214,6 +217,7 @@ def yue2_remix_song(
     strip_chords: bool = False,
     cover_prompt: Optional[str] = None,
     generate_cover: bool = True,
+    instrumental: bool = False,
     wait: bool = True,
 ) -> dict:
     """Remix a library song in a new style, reusing its ABC score (melody/chords).
@@ -232,6 +236,7 @@ def yue2_remix_song(
         strip_chords: Strip chord symbols from reused ABC (for melody-only remixes).
         cover_prompt: Optional image prompt for album cover art.
         generate_cover: Whether to generate AI album cover art in parallel (default True).
+        instrumental: If True, make the remix an instrumental without vocals.
         wait: If True (default), waits until generation completes and returns the finished song.
     """
     payload = {
@@ -247,6 +252,7 @@ def yue2_remix_song(
         "strip_chords": strip_chords,
         "cover_prompt": cover_prompt,
         "generate_cover": generate_cover,
+        "instrumental": instrumental,
     }
     with _client() as c:
         r = c.post(f"/api/songs/{song_id}/remix", json=payload)
